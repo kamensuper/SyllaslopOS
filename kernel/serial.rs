@@ -1,4 +1,4 @@
-use core::arch::asm;
+use crate::io::{inb, outb};
 
 const COM1: u16 = 0x3f8;
 const LINE_CONTROL: u16 = COM1 + 3;
@@ -22,6 +22,16 @@ impl Com1 {
         Self(())
     }
 
+    pub fn read(&mut self) -> Option<u8> {
+        // SAFETY: COM1 is owned by this instance and the kernel runs at CPL0.
+        let status = unsafe { inb(LINE_STATUS) };
+        if status & 1 == 0 || status == 0xff {
+            return None;
+        }
+        let byte = unsafe { inb(COM1) };
+        (status & 0x1e == 0).then_some(byte)
+    }
+
     pub fn write(&mut self, bytes: &[u8]) {
         for &byte in bytes {
             // SAFETY: constructing Com1 establishes exclusive, privileged I/O.
@@ -32,14 +42,4 @@ impl Com1 {
             unsafe { outb(COM1, byte) };
         }
     }
-}
-
-unsafe fn outb(port: u16, value: u8) {
-    asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
-}
-
-unsafe fn inb(port: u16) -> u8 {
-    let value: u8;
-    asm!("in al, dx", in("dx") port, out("al") value, options(nomem, nostack, preserves_flags));
-    value
 }

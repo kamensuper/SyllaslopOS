@@ -1,6 +1,11 @@
 #![no_std]
 #![no_main]
 
+mod bootinfo;
+mod console;
+mod graphics;
+mod input;
+mod io;
 mod serial;
 
 use core::arch::asm;
@@ -35,7 +40,19 @@ pub extern "C" fn kernel_main(magic: u32, info_phys: u64) -> ! {
     }
 
     serial.write(b"SYLLASLOPOS: x86_64 kernel entry ok\r\n");
-    halt();
+    // SAFETY: the magic and entry stack were checked, GRUB handed off this
+    // immutable physical blob, and the bootstrap identity map is still live.
+    let boot = unsafe { bootinfo::BootInfo::read(info_phys) };
+    let framebuffer = boot
+        .as_ref()
+        .filter(|info| !info.serial_only())
+        .and_then(|info| {
+            // SAFETY: single boot CPU, framebuffer unclaimed, no interrupts.
+            unsafe { graphics::Framebuffer::attach(info) }
+        });
+    // SAFETY: the legacy PC i8042 ports are unclaimed and IRQs are masked.
+    let keyboard = unsafe { input::Keyboard::init() };
+    console::run(serial, keyboard, framebuffer, boot.as_ref())
 }
 
 #[panic_handler]

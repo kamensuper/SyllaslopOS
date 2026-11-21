@@ -1,49 +1,45 @@
 # Boot contract
 
-## Decision · 2026-11-21
+SyllaslopOS uses GRUB Multiboot2 with a BIOS El Torito ISO. The entry stub
+initializes x86-64 long mode and calls Rust using SysV. The Rust target stays
+`x86_64-unknown-none` with a static higher-half code model and an aborting
+panic handler. QEMU TCG and SeaBIOS are the exercised firmware path.
 
-Use the existing repository's GRUB Multiboot2 path for the first kernel entry.
-A BIOS El Torito ISO and QEMU TCG provide one small, observable boot path.
-GRUB has a host-side header check and the precedent of Slopix. This choice
-keeps responsibility for the long-mode transition in the kernel. The Rust
-kernel uses the freestanding `x86_64-unknown-none` target, with a static
-higher-half code model, aborting panic handler and the SysV calling convention.
+## Entry and boot memory
 
-## Entry and mapping
+1. GRUB loads `/boot/kernel.elf`. Its Multiboot2 header is at file offset
+   `0x1000` and includes an optional framebuffer request. The ISO selects
+   the mode after the GRUB `multiboot2` command processes that request.
+2. Assembly verifies the boot magic in EAX, preserves the physical information
+   address from EBX, enables PAE, and establishes its own GDT and CR3.
+   A higher-half stack of 64 KiB and a 16-byte aligned pre-call RSP establish
+   the Rust entry boundary. EFER.NXE is enabled on supporting processors.
+3. The first 32 MiB are visible at VA zero and at `0xffffffff80000000`.
+   Those temporary 2 MiB supervisor leaves cover entry, the stack, active
+   tables, and bootloader data. ELF load segments independently separate RX,
+   RW and read-only areas. The loader bytes are immutable under this kernel.
+4. Rust checks the stack and handoff before emitting the original COM1
+   entry marker. It validates the Multiboot blob within the low window
+   with a 1 MiB cap, alignment, tag bounds and a trailing end record.
+   Missing or malformed optional information leaves COM1 available.
 
-1. SeaBIOS starts GRUB from the ISO. The GRUB menu uses `multiboot2` to load
-   `/boot/kernel.elf`. The header lives at file offset `0x1000` in the linked
-   ELF, within the first 32 KiB required by Multiboot2.
-2. GRUB enters `_start` in 32-bit protected mode at physical `0x100018`.
-   Assembly masks interrupts, clears DF, checks the magic in EAX and saves EBX
-   as the physical boot info address. It checks the CPU's long-mode bit.
-3. Assembly initializes four 4 KiB page-table pages from the ELF's zero-filled
-   boot BSS and loads its own GDT and CR3. It enables PAE, EFER.LME and paging,
-   then far-jumps into 64-bit code through the GDT. The leaf maps physical
-   `0..0x200000` at both `0` and `0xffffffff80000000`. The linker constrains
-   the entire image and stack to this range.
-4. The 64-bit stub sets the data selectors, switches to the 16 KiB kernel
-   stack and calls `kernel_main(u32, u64)` with a 16-byte aligned pre-call
-   stack. Rust checks the original magic, the nonzero/aligned info address
-   and that RSP lies within the kernel stack. It does not read the info
-   structure. The success line is emitted after these checks. COM1 uses
-   115200 baud, 8N1 and bounded transmit polling.
+The boot aliases remain writable and executable. The kernel keeps all
+boot tables and loader bytes reserved. Interrupts remain masked. Before
+publishing general RAM, add a kernel IDT, guarded stacks, per-section
+protections, and a record of the live boot mappings and references.
 
-The ELF has separate RX, RW and read-only load segments. Both bootstrap
-virtual aliases use a coarse supervisor-writable, executable 2 MiB leaf.
-The entry path keeps its boot GDT, mappings and stack alive. Interrupts stay
-masked. The milestone includes no IDT, frame allocator, memory-map parser or
-boot memory reclaim. Before reclaim or dropping the low alias, establish and
-verify kernel-owned exception handling and the next mapping layout, then
-account for every live pointer and table.
+## Framebuffer aperture
 
-## Verification
+The renderer accepts direct RGB with 24 or 32 bits per pixel. It checks extent,
+pitch, 32-bit alignment, channel widths and overlap, and the byte span of the
+padded framebuffer. Early BIOS graphics are scoped to the physical
+`[0xc0000000, 0x100000000)` PCI window and must not overlap non-reserved
+ranges in the firmware map after 2 MiB rounding. At most 64 MiB are mapped
+into the dedicated virtual window at `0xffffff0000000000`. The leaves use
+uncached memory and disable instruction fetch on supporting CPUs. This
+aperture has no alias in the low RAM window. The kernel draws directly and
+uses the reported pitch. Invalid modes and the `serial` boot argument
+select COM1 recovery.
 
-`make check` runs the GRUB Multiboot2 probe and reports ELF metadata.
-`make test` boots a PC i440FX 7.2 machine on QEMU TCG with a `qemu64` CPU.
-It requires a full COM1 marker line within 20 seconds and rejects an immediate
-reset or exit after the marker. The guest check covers BIOS on this emulator.
-The exact tool and firmware versions are in [progress and verification](../PROGRESS.md).
-
-- [GNU Multiboot2 specification](https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html)
-- [Rust x86_64-unknown-none target](https://doc.rust-lang.org/rustc/platform-support/x86_64-unknown-none.html)
+- [Multiboot2 boot information format](https://www.gnu.org/software/grub/manual/multiboot2/html_node/Boot-information-format.html)
+- [Rust bare-metal x86-64 target](https://doc.rust-lang.org/rustc/platform-support/x86_64-unknown-none.html)

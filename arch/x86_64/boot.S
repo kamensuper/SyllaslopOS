@@ -10,6 +10,9 @@ header_start:
     .long 0                        # i386 Multiboot2 entry ABI
     .long header_end - header_start
     .long -(MULTIBOOT2_HEADER_MAGIC + (header_end - header_start))
+    .short 5, 1                    # optional framebuffer request
+    .long 20, 0, 0, 32            # GRUB chooses resolution, prefer 32 bpp
+    .balign 8
     .short 0, 0
     .long 8                        # end tag
 header_end:
@@ -34,14 +37,24 @@ _start:
     cpuid
     testl $(1 << 29), %edx         # long mode
     jz .Lhalt32
+    movl %edx, %ebx               # preserve extended features for EFER
 
-    # The ELF loader zeroes these NOBITS pages. Build two aliases of the
-    # same 2 MiB frame: VA 0 and VA 0xffffffff80000000.
+    # The loader zeroes the tables. Keep the first 32 MiB visible at VA 0
+    # and the kernel base. Rust maps framebuffer MMIO in a separate window.
     movl $low_pdpt + 3, pml4
+    movl $mmio_pdpt + 3, pml4 + 510 * 8
     movl $high_pdpt + 3, pml4 + 511 * 8
     movl $page_directory + 3, low_pdpt
     movl $page_directory + 3, high_pdpt + 510 * 8
-    movl $0x83, page_directory    # present | writable | large page
+    movl $mmio_page_directory + 3, mmio_pdpt
+    xorl %ecx, %ecx
+    movl $0x83, %eax              # present | writable | large page
+.Lmap_boot:
+    movl %eax, page_directory(,%ecx,8)
+    addl $0x200000, %eax
+    incl %ecx
+    cmpl $16, %ecx
+    jb .Lmap_boot
 
     lgdt gdt_pointer
     movl $(1 << 5), %eax          # PAE, four-level paging
@@ -52,6 +65,10 @@ _start:
     movl $0xc0000080, %ecx        # EFER
     rdmsr
     orl $(1 << 8), %eax           # LME
+    btl $20, %ebx
+    jnc .Lwrite_efer
+    orl $(1 << 11), %eax          # NXE where supported
+.Lwrite_efer:
     wrmsr
 
     movl %cr0, %eax
@@ -104,6 +121,11 @@ low_pdpt:
 high_pdpt:
     .skip 4096
 page_directory:
+    .skip 4096
+mmio_pdpt:
+    .skip 4096
+.global mmio_page_directory
+mmio_page_directory:
     .skip 4096
 
 .section .note.GNU-stack,"",@progbits
