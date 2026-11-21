@@ -12,6 +12,8 @@ import tty
 
 TIMEOUT = 15
 ANSI = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
+SETTLE_SECONDS = 0.24
+BACKDROP = bytes((12, 13, 17))
 
 
 def read_available(fd, deadline):
@@ -78,11 +80,11 @@ class Guest:
             key = {" ": "spc", "\n": "ret", "\t": "tab", "-": "minus"}.get(char, char)
             self.key(key)
 
-    def key(self, key):
+    def key(self, key, delay=0.045):
         message = self.qmp("human-monitor-command", **{"command-line": f"sendkey {key} 25"})
         if message:
             raise RuntimeError(message)
-        time.sleep(0.045)
+        time.sleep(delay)
 
     def serial(self, text):
         os.write(self.port, text)
@@ -109,25 +111,43 @@ class Guest:
 
 def graphical(guest, resolution):
     guest.wait_for(b"SLC VIDEO " + resolution.encode(), 0)
+    time.sleep(SETTLE_SECONDS)
     home = guest.screen("console")
-    for command, marker in [
-        ("sy\t\n", b"SYSTEM OVERVIEW"),
-        ("help\n", b"command reference"),
-        ("echo guest-input\n", b"\r\nguest-input\r\n"),
-    ]:
-        start = len(guest.serial_log)
-        guest.ps2(command)
-        guest.wait_for(marker, start)
-        if command.startswith("sy"):
-            assert home != guest.screen("sysinfo")
-            guest.key("esc")
-        elif command == "help\n":
-            start = len(guest.serial_log)
-            guest.ps2("memory\n")
-            guest.wait_for(b"[command reference: memory]", start)
-            guest.wait_for(b"Summarize the firmware memory map", start)
-            assert home != guest.screen("help")
-            guest.key("esc")
+    pixels = home.split(b"\n", 3)[3]
+    background_fraction = pixels.count(BACKDROP) * 3 / len(pixels)
+    assert background_fraction > 0.985, f"idle framebuffer background is {background_fraction:.3%}"
+    time.sleep(0.1)
+    assert home == guest.screen("idle-settled"), "idle display was still changing"
+
+    guest.ps2("sy\t")
+    start = len(guest.serial_log)
+    guest.key("ret", delay=0)
+    guest.wait_for(b"SYSTEM OVERVIEW", start)
+    frames = []
+    for index in range(8):
+        frames.append(guest.screen(f"motion-{index:02d}"))
+        time.sleep(0.016)
+    time.sleep(SETTLE_SECONDS)
+    system = guest.screen("sysinfo")
+    assert home != system
+    assert len(set(frames + [system])) >= 3, "missing successive transition frames"
+    guest.key("esc")
+
+    start = len(guest.serial_log)
+    guest.ps2("help\n")
+    guest.wait_for(b"command reference", start)
+    guest.ps2("memory\n")
+    guest.wait_for(b"[command reference: memory]", start)
+    guest.wait_for(b"Summarize the firmware memory map", start)
+    time.sleep(SETTLE_SECONDS)
+    assert home != guest.screen("help")
+    guest.key("esc")
+
+    start = len(guest.serial_log)
+    guest.ps2("echo guest-input\n")
+    guest.wait_for(b"\r\nguest-input\r\n", start)
+    time.sleep(SETTLE_SECONDS)
+    assert home != guest.screen("output")
 
     start = len(guest.serial_log)
     guest.key("up")
@@ -153,7 +173,18 @@ def graphical(guest, resolution):
     start = len(guest.serial_log)
     guest.ps2("clear\n")
     guest.wait_for(b"Activity cleared", start)
+    time.sleep(SETTLE_SECONDS)
     assert decorated != guest.screen("cleared")
+
+    start = len(guest.serial_log)
+    guest.ps2("motion off\n")
+    guest.wait_for(b"Motion: off.", start)
+    start = len(guest.serial_log)
+    guest.key("f2", delay=0)
+    guest.wait_for(b"SYSTEM OVERVIEW", start)
+    immediate = guest.screen("motion-off")
+    time.sleep(SETTLE_SECONDS)
+    assert immediate == guest.screen("motion-off-settled"), "motion off did not snap"
 
 
 def recovery(guest):

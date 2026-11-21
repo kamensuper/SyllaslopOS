@@ -43,7 +43,7 @@ recall previous commands. Use Home, End and Delete to edit, Ctrl+L to clear
 activity, and Esc to close a view. On COM1, Ctrl+] closes a view.
 
 Try `bootinfo`, `devices`, `history`, `theme ember`, `theme mono`,
-`zoom 2` and `metrics`. See [the console guide](docs/CONSOLE.md) for the
+`zoom 2` and `metrics`. Run `motion off` for instant view changes. See [the console guide](docs/CONSOLE.md) for the
 input model, verification, and limits, and [the boot contract](docs/BOOT.md)
 for memory ownership and firmware requirements.
 

@@ -1,3 +1,4 @@
+mod clock;
 mod commands;
 mod screen;
 mod state;
@@ -7,7 +8,9 @@ use crate::graphics::Framebuffer;
 use crate::input::{Key, Keyboard, SerialKeys};
 use crate::serial::Com1;
 
+use clock::Clock;
 use commands::Services;
+use screen::Screen;
 use state::{Change, Console, Line, Tone, View};
 
 pub fn run(
@@ -19,31 +22,19 @@ pub fn run(
     let video = framebuffer.as_ref().map(Framebuffer::video);
     let mut services = Services::collect(boot, video, keyboard.is_some());
     let mut console = Console::new();
-    console.log(
-        Tone::Success,
-        format_args!("Kernel initialized / x86_64 long mode"),
-    );
-    if let Some(video) = video {
-        console.log(
-            Tone::Text,
-            format_args!(
-                "Framebuffer {} x {} / {} bpp",
-                video.width, video.height, video.bpp
-            ),
-        );
-    } else {
-        console.log(Tone::Muted, format_args!("COM1 recovery console"));
-    }
-    console.log(
-        Tone::Muted,
-        format_args!("Type help for commands. F1 opens the reference."),
-    );
-    if let Some(frame) = framebuffer.as_mut() {
-        screen::draw(frame, &console, &services, Change::Full);
+    let clock = video.and_then(|_| {
+        // SAFETY: the early BIOS console is on the boot CPU with IRQs masked.
+        // There is no other PIT channel 2 or speaker-port owner.
+        unsafe { Clock::calibrate() }
+    });
+    services.motion_clock = clock.is_some();
+    let mut screen = framebuffer.as_mut().map(|frame| {
+        let screen = Screen::new(frame, &console, clock.as_ref().map(Clock::ms));
         services.initial_bytes = frame.bytes_written();
         services.frame_bytes = services.initial_bytes;
         services.last_draw_bytes = services.initial_bytes;
-    }
+        screen
+    });
     message(
         &mut serial,
         format_args!(
@@ -61,7 +52,6 @@ pub fn run(
             format_args!("SLC VIDEO {}x{}x{}", video.width, video.height, video.bpp),
         );
     }
-    report(&mut serial, &console);
     serial_prompt(&mut serial, &console);
 
     let mut serial_keys = SerialKeys::default();
@@ -79,9 +69,9 @@ pub fn run(
                 continue;
             }
 
-            if let Some(frame) = framebuffer.as_mut() {
+            if let (Some(frame), Some(screen)) = (framebuffer.as_mut(), screen.as_mut()) {
                 let before = frame.bytes_written();
-                screen::draw(frame, &console, &services, change);
+                screen.change(frame, &console, change, clock.as_ref().map(Clock::ms));
                 services.frame_bytes = frame.bytes_written();
                 services.last_draw_bytes = services.frame_bytes - before;
             }
@@ -119,11 +109,25 @@ pub fn run(
                         format_args!("The i8042 controller rejected the reset request."),
                     );
                     report(&mut serial, &console);
-                    if let Some(frame) = framebuffer.as_mut() {
-                        screen::draw(frame, &console, &services, Change::Report);
+                    if let (Some(frame), Some(screen)) = (framebuffer.as_mut(), screen.as_mut()) {
+                        screen.change(
+                            frame,
+                            &console,
+                            Change::Report,
+                            clock.as_ref().map(Clock::ms),
+                        );
+                        services.frame_bytes = frame.bytes_written();
                     }
                 }
                 _ => {}
+            }
+        }
+        if let (Some(frame), Some(screen), Some(clock)) =
+            (framebuffer.as_mut(), screen.as_mut(), &clock)
+        {
+            if screen.animating() {
+                screen.tick(frame, &console, clock.ms());
+                services.frame_bytes = frame.bytes_written();
             }
         }
     }

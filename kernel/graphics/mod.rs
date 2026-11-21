@@ -15,11 +15,6 @@ impl Rect {
         Self { x, y, w, h }
     }
 
-    pub fn inset(self, n: u32) -> Self {
-        let n = n.min(self.w / 2).min(self.h / 2);
-        Self::new(self.x + n, self.y + n, self.w - n * 2, self.h - n * 2)
-    }
-
     pub fn intersect(self, other: Self) -> Self {
         let x = self.x.max(other.x);
         let y = self.y.max(other.y);
@@ -66,7 +61,6 @@ pub const SMALL: Font = Font {
     h: 16,
     pixels: include_bytes!("assets/small.mask"),
 };
-pub const WORDMARK: &[u8] = include_bytes!("assets/wordmark.mask");
 
 #[derive(Clone, Copy)]
 pub struct Ink {

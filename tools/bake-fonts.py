@@ -15,8 +15,3 @@ for name, size, width, height in [("body", 15, 9, 18), ("small", 13, 8, 16)]:
         ImageDraw.Draw(glyph).text((width // 2, height - 4), chr(code), anchor="ms", font=font, fill=255)
         result.extend(glyph.tobytes())
     (target / f"{name}.mask").write_bytes(result)
-
-font = ImageFont.truetype(str(fonts / "DejaVuSans-Bold.ttf"), 56)
-mark = Image.new("L", (305, 68))
-ImageDraw.Draw(mark).text((0, 50), "Syllaslop", anchor="ls", font=font, fill=255)
-(target / "wordmark.mask").write_bytes(mark.tobytes())

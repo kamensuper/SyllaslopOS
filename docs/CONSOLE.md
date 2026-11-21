@@ -15,6 +15,7 @@ and Ctrl+] for returning from a view.
 | `sysinfo`, `cpu`, `memory`, `bootinfo`, `devices` | Inspect CPUID, the Multiboot2 handoff, framebuffer and active legacy interfaces |
 | `echo`, `clear` | Print ASCII text or reset the activity log |
 | `theme [name]`, `zoom [1\|2]` | Change palette or scale framebuffer text |
+| `motion [on\|off]` | Enable or disable short view transitions |
 | `metrics` | Report actual framebuffer bytes written |
 | `version`, `about`, `uptime` | Read version, current scope or clock availability |
 | `halt confirm`, `reboot confirm` | Halt the boot CPU or request an i8042 reset |
@@ -35,13 +36,24 @@ The CPU and memory views share one focus policy. In history, Enter recalls
 a command for editing. In help, typing filters immediately and PgUp/PgDn
 moves through matches. Esc returns to the command prompt.
 
-The graphical viewport wraps output to visible columns and scrolls by
-logical lines. The 800×600 layout shortens the identity panel, with
-keyboard controls still available. Graphite, Ember and Mono use the same
-geometry. The right-side perforated texture is computed with integer
-arithmetic. Text editing redraws only the prompt and its hint strip.
-Commands also redraw the workspace. The title and texture redraw at launch
-and during theme or scale switches. The interface has no timed animation.
+At idle, the centered command input and one wordmark occupy a uniform
+near-black framebuffer. When a command produces output, the active layout
+uses a bounded reading column. Requested system views replace the prompt
+with the requested text and one return hint. Hints for search, history, and
+completion appear only in those contexts. Output wraps to visible columns
+and scrolls by logical lines.
+
+A short reveal runs at startup and when entering or leaving a view. A new
+anchor settles over six pixels and result glyphs fade in over 180 ms.
+The renderer samples only while a reveal is active and stops scheduling
+frames at the endpoint. Input never waits for a fade. Typing redraws the
+previous and new prompt ink bounds. `motion off` snaps to the destination.
+The temporary animation clock calibrates TSC against PIT channel 2 on the
+BIOS boot CPU. When calibration is unavailable, updates snap as well.
+
+The [OpenCode v2.3.2 research and composition comparison](OPENCODE-V2-RESEARCH.md)
+records the reviewed source and why the centered idle/upper result layout
+was chosen.
 
 ## Implementation files
 
@@ -49,9 +61,9 @@ and during theme or scale switches. The interface has no timed animation.
 | --- | --- |
 | Boot and handoff | `arch/x86_64/boot.S`, `arch/x86_64/linker.ld`, `boot/grub/grub.cfg`, `kernel/main.rs`, `kernel/bootinfo.rs` |
 | Input and services | `kernel/input.rs`, `kernel/io.rs`, `kernel/serial.rs`, `kernel/console/commands.rs` |
-| Console model and renderer | `kernel/console/{mod,state,screen}.rs`, `kernel/graphics/{mod,framebuffer}.rs`, bitmap masks and license under `kernel/graphics/assets/` |
+| Console model and renderer | `kernel/console/{mod,state,screen,clock}.rs`, `kernel/graphics/{mod,framebuffer}.rs`, bitmap masks and license under `kernel/graphics/assets/` |
 | Builds and tests | `Makefile`, `kernel/host_tests.rs`, `tools/console-check.py`, `tools/bake-fonts.py` |
-| Project documentation | `README.md`, `PROGRESS.md`, `docs/{BOOT,CONSOLE,REFERENCES}.md` |
+| Project documentation | `README.md`, `PROGRESS.md`, `docs/{BOOT,CONSOLE,OPENCODE-V2-RESEARCH,REFERENCES}.md` |
 
 ## Verification procedure
 

@@ -96,6 +96,7 @@ pub struct Services {
     pub loader: Option<&'static str>,
     pub boot_blob: Option<(u64, usize)>,
     pub keyboard: bool,
+    pub motion_clock: bool,
     pub frame_bytes: u64,
     pub initial_bytes: u64,
     pub last_draw_bytes: u64,
@@ -260,6 +261,14 @@ pub static REGISTRY: &[Command] = &[
         Args::Choices(&["1", "2"]),
         Need::Graphics,
         zoom,
+    ),
+    cmd(
+        "motion",
+        "motion [on|off]",
+        "Enable or disable short view transitions",
+        Args::Choices(&["on", "off"]),
+        Need::Graphics,
+        motion,
     ),
     cmd(
         "version",
@@ -609,6 +618,24 @@ fn zoom(console: &mut Console, _: &Services, args: &str) -> Change {
     console.zoom = scale;
     console.log(Tone::Success, format_args!("Text scale set to {scale}."));
     Change::Full
+}
+
+fn motion(console: &mut Console, services: &Services, args: &str) -> Change {
+    if !services.motion_clock {
+        console.log(
+            Tone::Muted,
+            format_args!("Transitions are unavailable without a calibrated animation clock."),
+        );
+        return Change::Report;
+    }
+    match args {
+        "on" => console.motion = true,
+        "off" => console.motion = false,
+        _ => {}
+    }
+    let value = if console.motion { "on" } else { "off" };
+    console.log(Tone::Text, format_args!("Motion: {value}."));
+    Change::Report
 }
 
 fn uptime(console: &mut Console, _: &Services, _: &str) -> Change {
