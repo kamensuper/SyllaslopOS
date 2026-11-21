@@ -39,6 +39,8 @@ image, use `make BUILD=build/compact GRUB_DEFAULT=compact run`.
 Use Ctrl+P or F1 to find commands and Ctrl+R to search history.
 Enter stages the selected command in the prompt. Tab completes names
 and arguments. Right accepts a muted suggestion at the end of an input.
+Ctrl+A and Ctrl+E jump to the ends of the line, Ctrl+Left and Ctrl+Right
+move by word, Ctrl+W erases a word and Ctrl+K erases to the end.
 Press Esc to close a view (Ctrl+] over COM1).
 
 Try `calc (0xff & 15) * 4`, `base 4096`, `memmap`, and `sysinfo`.

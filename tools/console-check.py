@@ -165,6 +165,19 @@ def graphical(guest, resolution):
     guest.ps2("t\n")
     guest.wait_for(b"\r\nguest-input\r\n", start)
     start = len(guest.serial_log)
+    guest.ps2("echo alpha beta")
+    guest.key("ctrl-left")
+    guest.key("ctrl-w")
+    guest.key("ctrl-e")
+    guest.ps2(" gamma delta")
+    guest.key("ctrl-a")
+    guest.key("ctrl-right")
+    guest.key("ctrl-right")
+    guest.key("ctrl-right")
+    guest.key("ctrl-k")
+    guest.key("ret")
+    guest.wait_for(b"\r\nbeta gamma\r\n", start)
+    start = len(guest.serial_log)
     guest.ps2("metrics\n")
     guest.wait_for(b"First frame:", start)
 
@@ -218,6 +231,9 @@ def recovery(guest):
         (b"base 0xff\r", b"bin  0b11111111"),
         (b"\x12recovery\r", b"slc> echo recovery"),
         (b"\r", b"\r\nrecovery\r\n"),
+        # Modified arrows are word motions, and no sequence leaks text.
+        (b"echo one two\x1b[1;5D\x17\x1b[1;2C\x1b[?25h\x05 three\x1bb\x0b\r", b"\r\ntwo\r\n"),
+        (b"echo five six\x01\x1b[1;3C\x1bf\x1b\x7f\r", b"\r\nsix\r\n"),
         (b"clear\r", b"Activity cleared"),
     ]:
         start = len(guest.serial_log)

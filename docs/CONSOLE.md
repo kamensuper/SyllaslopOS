@@ -50,6 +50,14 @@ the selection. Enter stages a selection in the editable prompt, and a
 separate Enter submits it. Esc returns to the prior draft. On COM1 use
 Ctrl+] for Esc.
 
+The command field and both filters share one bounded line editor. Ctrl+A
+and Ctrl+E move to the ends of the line. Ctrl+Left and Ctrl+Right move by
+word, Ctrl+W or Ctrl+Backspace erases the previous word, Ctrl+K erases to
+the end and Ctrl+U erases the line. COM1 accepts the same control bytes,
+xterm's modified arrow sequences, and Alt+B, Alt+F and Alt+Backspace. The
+COM1 decoder consumes every escape, CSI and SS3 sequence through its final
+byte, so sequences without a binding never reach the prompt as text.
+
 In the command field, nonempty input can expose a muted inline suffix.
 Suggestions come from this boot's history, then command names. Right
 accepts the entire suggestion when the caret is at the end of the field.

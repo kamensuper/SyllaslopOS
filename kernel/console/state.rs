@@ -149,9 +149,44 @@ impl Edit {
             Key::Home => self.cursor = 0,
             Key::End => self.cursor = self.len,
             Key::Erase => *self = Self::EMPTY,
+            Key::WordLeft => self.cursor = self.word_start(),
+            Key::WordRight => self.cursor = self.word_end(),
+            Key::EraseWord => {
+                let start = self.word_start();
+                self.bytes.copy_within(self.cursor..self.len, start);
+                self.len -= self.cursor - start;
+                self.cursor = start;
+            }
+            Key::EraseToEnd => self.len = self.cursor,
             _ => return false,
         }
         true
+    }
+
+    /// The start of the word at or before the cursor, as readline defines it.
+    fn word_start(&self) -> usize {
+        let head = &self.bytes[..self.cursor];
+        let word = head
+            .iter()
+            .rposition(|&byte| byte != b' ')
+            .map_or(0, |i| i + 1);
+        head[..word]
+            .iter()
+            .rposition(|&byte| byte == b' ')
+            .map_or(0, |i| i + 1)
+    }
+
+    fn word_end(&self) -> usize {
+        let tail = &self.bytes[self.cursor..self.len];
+        let gap = tail
+            .iter()
+            .position(|&byte| byte != b' ')
+            .unwrap_or(tail.len());
+        let word = tail[gap..]
+            .iter()
+            .position(|&byte| byte == b' ')
+            .unwrap_or(tail.len() - gap);
+        self.cursor + gap + word
     }
 
     fn delete(&mut self) {
@@ -649,6 +684,31 @@ mod tests {
         assert_eq!(edit.bytes().len(), INPUT);
         edit.apply(Key::Backspace);
         assert_eq!(edit.bytes()[0], b'a');
+    }
+
+    #[test]
+    fn word_motion_and_erasure_follow_readline() {
+        let mut edit = Edit::EMPTY;
+        edit.replace(b"echo  alpha beta ");
+        for (key, text, cursor) in [
+            (Key::WordLeft, "echo  alpha beta ", 12),
+            (Key::WordLeft, "echo  alpha beta ", 6),
+            (Key::EraseWord, "alpha beta ", 0),
+            (Key::WordLeft, "alpha beta ", 0),
+            (Key::WordRight, "alpha beta ", 5),
+            (Key::WordRight, "alpha beta ", 10),
+            (Key::EraseWord, "alpha  ", 6),
+            (Key::WordRight, "alpha  ", 7),
+            (Key::WordRight, "alpha  ", 7),
+            (Key::Home, "alpha  ", 0),
+            (Key::Right, "alpha  ", 1),
+            (Key::EraseToEnd, "a", 1),
+            (Key::EraseWord, "", 0),
+            (Key::EraseWord, "", 0),
+        ] {
+            assert!(edit.apply(key));
+            assert_eq!((edit.text(), edit.cursor), (text, cursor), "{key:?}");
+        }
     }
 
     #[test]
