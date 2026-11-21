@@ -115,3 +115,47 @@ keeps the boot CPU awake. Power command confirmation is implemented; these
 guest checks did not exercise reset or halt. The next milestone is an IDT
 and fault diagnostics, followed by input IRQs, reliable timing, and protected
 memory ownership.
+
+## Minimal console redesign · 2026-11-21
+
+The redesign was built from local source commit
+`2c22fc76d41b7df6c6c89a8c1affba7feb374a5e`, tree
+`447cc2602ef00c4eb68e7300aab4a9f1d4d49c55`. It follows a research pass
+through the pinned OpenCode v2.3.2 CLI source and a comparison of two
+implemented VGA compositions. The rationale and source links are in
+[OpenCode v2 research](docs/OPENCODE-V2-RESEARCH.md).
+
+| Evidence | Result |
+| --- | --- |
+| Original `make test` boot check | Passed with the same serial entry marker |
+| Host tests | 13 passed, including layout bounds and reveal endpoints |
+| 1024×768 and 800×600 VGA | Real PS/2 command editing, completion, help, history, system information, zoom, clear and theme all passed |
+| Motion | QMP sampled 8 distinct frames at 1024×768 and 7 at 800×600, including the settled states. Subsequent idle frames were identical. `motion off` produced identical immediate and settled captures. |
+| Recovery | COM1 commands passed in both a recovery ISO and the default ISO booted with `-vga none` |
+| Independent clean build | ELF and default ISO matched byte for byte |
+
+The idle screenshot has only a text wordmark, prompt, placeholder and caret.
+The exact flat background occupies 99.8791% at 1024×768 and 99.8019% at
+800×600. The previous default idle used its darkest background at 23.99%.
+On the compact viewport the fixed-center composition holds nine default-scale
+activity rows. The selected layout holds eighteen. Both are genuine guest
+captures in the deliverable.
+
+The last prompt update before the `metrics` command wrote 7,032 framebuffer
+bytes at both sizes. Previously the same command path reported 340,536 bytes
+at 1024×768 and 263,480 at 800×600. These values measure pixel writes
+including clearing and overdraw. They do not measure input latency or VM
+CPU consumption. The renderer stops scheduling frames after each reveal.
+The kernel still polls input while idle.
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `build/kernel.elf` | 141,504 | `fe40426f554652e3a45cf5913ec58548ef70cfcad71a9cadbb35e7d24a82b8fe` |
+| `build/syllaslopos.iso` | 2,852,864 | `01141c4a095570a7b7a106bbb0d95d0abacb4440926c57408c9b7ec37d0fa43d` |
+| `build/compact/syllaslopos.iso` | 2,852,864 | `784e1a98a4fec97d9a14648afb1c1f10d9b8068a672c667ef8d36803d393cbda` |
+| `build/recovery/syllaslopos.iso` | 2,852,864 | `a57c32f8eeab20346d112830e42e14e82a151e552c4da9bbd970548bdcddd8f1` |
+
+`make -j4 test test-console` ran with the QEMU and SeaBIOS identities
+recorded above. For the no-VGA case, run the existing recovery probe with
+`--qemu qemu-system-x86_64 -vga none` against the default ISO. This boot
+and timer path is verified on the BIOS QEMU guest.
