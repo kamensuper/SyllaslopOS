@@ -1,0 +1,85 @@
+diff --git a/boot-check.py b/boot-check.py
+index c8c38f8..fb0de51 100644
+--- a/boot-check.py
++++ b/boot-check.py
+@@ -25,0 +26 @@ def boot(command: list[str], log_path: Path) -> bool:
++            marker_seen = False
+@@ -31,2 +32,11 @@ def boot(command: list[str], log_path: Path) -> bool:
+-                    print(f"FAIL: QEMU ended before the kernel marker (see {log_path})")
+-                    return guest.wait() == 0
++                    if marker_seen:
++                        # With the pipe closed, waiting cannot block a guest write.
++                        try:
++                            guest.wait(timeout=max(0, deadline - time.monotonic()))
++                        except subprocess.TimeoutExpired:
++                            pass
++                        break
++                    print(
++                        f"FAIL: QEMU output closed before the kernel marker (see {log_path})"
++                    )
++                    return False
+@@ -34,0 +45,2 @@ def boot(command: list[str], log_path: Path) -> bool:
++                if marker_seen:
++                    continue
+@@ -36,12 +48,7 @@ def boot(command: list[str], log_path: Path) -> bool:
+-                if any(line.rstrip(b"\r") == MARKER for line in lines):
+-                    # With -no-reboot, a reset ends QEMU. Catch immediate resets
+-                    # and shutdowns even if COM1 already sent the marker.
+-                    try:
+-                        status = guest.wait(timeout=RESET_WINDOW)
+-                    except subprocess.TimeoutExpired:
+-                        print(f"PASS: {MARKER.decode()} (see {log_path})")
+-                        return True
+-                    print(f"FAIL: QEMU exited after the kernel marker ({status})")
+-                    return False
+-                # No future suffix can make an overlong line equal to the marker.
+-                if len(pending) > len(MARKER) + 1:
++                if any(line.removesuffix(b"\r") == MARKER for line in lines):
++                    # With -no-reboot, a reset ends QEMU. Keep draining serial
++                    # output so a full pipe cannot prevent QEMU from exiting.
++                    marker_seen = True
++                    deadline = time.monotonic() + RESET_WINDOW
++                elif len(pending) > len(MARKER) + 1:
++                    # No future suffix can make an overlong line equal to the marker.
+@@ -48,0 +56,7 @@ def boot(command: list[str], log_path: Path) -> bool:
++            if marker_seen:
++                status = guest.poll()
++                if status is None:
++                    print(f"PASS: {MARKER.decode()} (see {log_path})")
++                    return True
++                print(f"FAIL: QEMU exited after the kernel marker ({status})")
++                return False
+diff --git a/numbers.rs b/numbers.rs
+index 4188cd8..e0aa154 100644
+--- a/numbers.rs
++++ b/numbers.rs
+@@ -55 +55 @@ impl Parser<'_> {
+-            let right = self.expr(priority, depth + 1)?;
++            let right = self.expr(priority + 1, depth + 1)?;
+@@ -117,0 +118,26 @@ mod tests {
++
++    #[test]
++    fn binary_operators_associate_left() {
++        assert_eq!(evaluate("8 - 3 + 1"), Ok(6));
++        assert_eq!(evaluate("24 / 3 * 2"), Ok(16));
++        assert_eq!(evaluate("20 % 6 % 4"), Ok(2));
++        let chain = format!("{}1", "1 + ".repeat(20));
++        assert_eq!(evaluate(&chain), Ok(21));
++        assert_eq!(
++            evaluate("9223372036854775807 + 1 - 1"),
++            Err("integer overflow")
++        );
++    }
++
++    #[test]
++    fn precedence_and_parser_errors() {
++        assert_eq!(evaluate("8 | 7 ^ 6 & 2 + 3 * 4"), Ok(9));
++        assert_eq!(evaluate("-2 * -(3 + 1)"), Ok(8));
++        assert_eq!(evaluate("0b12"), Err("unexpected token"));
++        assert_eq!(evaluate("0x"), Err("expected an integer"));
++        assert_eq!(evaluate("(3 + 4"), Err("expected closing parenthesis"));
++        assert_eq!(evaluate("2 % 0"), Err("division by zero"));
++        let nested = |levels| format!("{}1{}", "(".repeat(levels), ")".repeat(levels));
++        assert_eq!(evaluate(&nested(15)), Ok(1));
++        assert_eq!(evaluate(&nested(16)), Err("expression nested too deeply"));
++    }

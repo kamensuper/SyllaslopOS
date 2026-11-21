@@ -1,0 +1,27 @@
+diff --git a/boot-check.py b/boot-check.py
+index c8c38f8..b08758d 100644
+--- a/boot-check.py
++++ b/boot-check.py
+@@ -32 +32 @@ def boot(command: list[str], log_path: Path) -> bool:
+-                    return guest.wait() == 0
++                    return False
+@@ -36 +36 @@ def boot(command: list[str], log_path: Path) -> bool:
+-                if any(line.rstrip(b"\r") == MARKER for line in lines):
++                if any(line.removesuffix(b"\r") == MARKER for line in lines):
+diff --git a/numbers.rs b/numbers.rs
+index 4188cd8..16a00c4 100644
+--- a/numbers.rs
++++ b/numbers.rs
+@@ -55 +55 @@ impl Parser<'_> {
+-            let right = self.expr(priority, depth + 1)?;
++            let right = self.expr(priority + 1, depth + 1)?;
+@@ -117,0 +118,9 @@ mod tests {
++
++    #[test]
++    fn binary_operator_grouping() {
++        assert_eq!(evaluate("20 / 5 / 2"), Ok(2));
++        assert_eq!(evaluate("20 / (5 / 2)"), Ok(10));
++        assert_eq!(evaluate("20 / 5 % 3"), Ok(1));
++        assert_eq!(evaluate("1 | 2 ^ 3 & 1"), Ok(3));
++        assert_eq!(evaluate("9223372036854775807 + 1 - 1"), Err("integer overflow"));
++    }
