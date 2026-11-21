@@ -1,0 +1,14 @@
+# Build outputs
+/build/
+*.o
+*.d
+*.elf
+*.iso
+*.bin
+# Test artifacts
+/tests/out/
+# Editor noise
+*~
+.*.swp
+# Private task brief (not part of the repository)
+/BRIEF.md
