@@ -8,7 +8,6 @@ import select
 import shlex
 import subprocess
 import time
-import tty
 
 TIMEOUT = 15
 ANSI = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
@@ -32,14 +31,16 @@ class Guest:
         self.serial_log = bytearray()
         self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         self.port = None
+        self.feed = None
 
-    def connect(self):
-        assert "QMP" in self.message(time.monotonic() + TIMEOUT)
+    def connect(self, path):
+        deadline = time.monotonic() + TIMEOUT
+        assert "QMP" in self.message(deadline)
         self.qmp("qmp_capabilities")
-        serial = next(c["filename"] for c in self.qmp("query-chardev") if c["label"] == "serial0")
-        assert serial.startswith("pty:"), serial
-        self.port = os.open(serial.removeprefix("pty:"), os.O_RDWR | os.O_NOCTTY)
-        tty.setraw(self.port)
+        # QEMU holds both FIFOs open, so neither open blocks and COM1 output
+        # is buffered by the kernel pipe from the guest's first instruction.
+        self.port = os.open(f"{path}.out", os.O_RDONLY | os.O_NONBLOCK)
+        self.feed = os.open(f"{path}.in", os.O_WRONLY)
         self.qmp("cont")
 
     def message(self, deadline):
@@ -86,11 +87,11 @@ class Guest:
         time.sleep(delay)
 
     def serial(self, text):
-        os.write(self.port, text)
+        os.write(self.feed, text)
 
     def screen(self, name):
         path = self.folder / f"{name}.ppm"
-        self.qmp("screendump", filename=str(path), format="ppm")
+        self.qmp("screendump", filename=str(path))  # PPM is the default format
         data = path.read_bytes()
         assert data.startswith(b"P6\n") and len(data) > 640 * 480 * 3, path
         return data
@@ -99,6 +100,7 @@ class Guest:
         if self.port is not None:
             (self.folder / "serial.log").write_bytes(self.serial_log)
             os.close(self.port)
+            os.close(self.feed)
         if self.process.poll() is None:
             self.process.terminate()
             try:
@@ -228,19 +230,28 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--iso", required=True, type=Path)
     parser.add_argument("--resolution")
+    parser.add_argument("--machine", default="pc-i440fx-7.2")
     parser.add_argument("--qemu", nargs=argparse.REMAINDER, required=True)
     options = parser.parse_args()
     folder = options.output.resolve()
     folder.mkdir(parents=True, exist_ok=True)
+    # A named pipe pair has no connection state to race against guest start,
+    # and it buffers a full view of COM1 output between harness reads.
+    link = folder / "com1"
+    pipes = [Path(f"{link}.in"), Path(f"{link}.out")]
+    for pipe in pipes:
+        pipe.unlink(missing_ok=True)
+        os.mkfifo(pipe)
     command = options.qemu + [
-        "-machine", "pc-i440fx-7.2", "-accel", "tcg", "-cpu", "qemu64", "-m", "128M",
+        "-machine", options.machine, "-accel", "tcg", "-cpu", "qemu64", "-m", "128M",
         "-boot", "d", "-cdrom", str(options.iso.resolve()), "-nic", "none", "-no-reboot",
-        "-display", "none", "-monitor", "none", "-serial", "pty", "-qmp", "stdio", "-S",
+        "-display", "none", "-monitor", "none", "-qmp", "stdio", "-S",
+        "-serial", f"pipe:{link}",
     ]
     print(shlex.join(command), flush=True)
     guest = Guest(command, folder)
     try:
-        guest.connect()
+        guest.connect(link)
         guest.wait_for(b"SYLLASLOPOS: x86_64 kernel entry ok", 0)
         if options.resolution:
             graphical(guest, options.resolution)
@@ -250,6 +261,8 @@ def main():
         return 0
     finally:
         guest.close()
+        for pipe in pipes:
+            pipe.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
