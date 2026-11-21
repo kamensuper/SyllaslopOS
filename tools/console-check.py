@@ -240,6 +240,15 @@ def recovery(guest):
         guest.serial(command)
         guest.wait_for(marker, start)
 
+    # An NMI ignores the interrupt flag, so it exercises the exception gates.
+    start = len(guest.serial_log)
+    guest.qmp("inject-nmi")
+    guest.wait_for(b"SYLLASLOPOS: exception 2 (non-maskable interrupt) error=0x0\r\n", start)
+    guest.wait_for(b"SYLLASLOPOS: halted\r\n", start)
+    report = bytes(guest.serial_log[start:])
+    assert re.search(rb"rip=0xffffffff80[0-9a-f]{6} cs=0x8 ", report), report
+    assert re.search(rb"rsp=0xffffffff80[0-9a-f]{6} ss=0x10\r\n", report), report
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

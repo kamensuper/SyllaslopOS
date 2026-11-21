@@ -24,18 +24,20 @@ pub struct Framebuffer {
 impl Framebuffer {
     /// Call once, on the boot CPU with interrupts masked and the entry
     /// stub's page tables active. The GRUB framebuffer must still be owned.
-    pub unsafe fn attach(boot: &BootInfo<'_>) -> Option<Self> {
-        let video = boot.video()?;
-        let (start, end) = aperture(video)?;
+    ///
+    /// A refusal names the check that failed so the boot log can report it.
+    pub unsafe fn attach(boot: &BootInfo<'_>) -> Result<Self, &'static str> {
+        let video = boot.video().ok_or("no direct RGB framebuffer tag")?;
+        let (start, end) = aperture(video).ok_or("unsupported geometry or address")?;
         if !boot.clear_of_ram(start, end) {
-            return None;
+            return Err("aperture overlaps usable memory");
         }
         let nx = if __cpuid(0x8000_0001).edx & (1 << 20) != 0 {
             1 << 63
         } else {
             0
         };
-        let cache = uncached_flags()?;
+        let cache = uncached_flags().ok_or("no uncached PAT entry")?;
         let entries = addr_of_mut!(mmio_page_directory).cast::<u64>();
         // Write exclusively to virgin entries. The framebuffer aperture does
         // not alias the initial RAM mapping. Select the active UC PAT entry.
@@ -47,7 +49,7 @@ impl Framebuffer {
         }
 
         let base = (WINDOW + video.phys - start) as *mut u8;
-        Some(Self {
+        Ok(Self {
             base,
             video,
             writes: 0,
