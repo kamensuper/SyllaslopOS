@@ -99,7 +99,8 @@ See [the verification record](../PROGRESS.md) for measured results.
 
 ## Remaining work
 
-Input uses polled i8042 and COM1 because there is no IDT or IRQ dispatcher.
+Input uses polled i8042 and COM1 because there is no IRQ dispatcher; the
+IDT covers CPU exceptions only.
 It can keep a virtual CPU busy while idle. The console has a fixed firmware
 display mode, a US keyboard map, ASCII glyphs and boot-local history.
 There is no USB HID, hardware device enumeration, filesystem, process
