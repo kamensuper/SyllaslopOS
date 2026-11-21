@@ -379,22 +379,28 @@ pub fn run(console: &mut Console, services: &Services, text: &str) -> Change {
     (command.handler)(console, services, argument)
 }
 
+/// Completion matches without regard to case, as command lookup does.
 pub fn complete(first: &str, rest: Option<&str>, mut emit: impl FnMut(&'static str)) {
+    let begins = |name: &str, typed: &str| {
+        name.as_bytes()
+            .get(..typed.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(typed.as_bytes()))
+    };
     if let Some(rest) = rest {
-        let Some(command) = REGISTRY.iter().find(|c| c.name == first) else {
+        let Some(command) = REGISTRY.iter().find(|c| c.name.eq_ignore_ascii_case(first)) else {
             return;
         };
         if command.name == "help" {
-            for next in REGISTRY.iter().filter(|c| c.name.starts_with(rest)) {
+            for next in REGISTRY.iter().filter(|c| begins(c.name, rest)) {
                 emit(next.name);
             }
         } else if let Args::Choices(choices) = command.args {
-            for &choice in choices.iter().filter(|choice| choice.starts_with(rest)) {
+            for &choice in choices.iter().filter(|choice| begins(choice, rest)) {
                 emit(choice);
             }
         }
     } else {
-        for command in REGISTRY.iter().filter(|c| c.name.starts_with(first)) {
+        for command in REGISTRY.iter().filter(|c| begins(c.name, first)) {
             emit(command.name);
         }
     }

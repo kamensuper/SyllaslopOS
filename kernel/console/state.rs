@@ -4,6 +4,8 @@ use super::commands::{self, Services};
 use crate::input::Key;
 
 const INPUT: usize = 96;
+/// A log line holds a full prompt behind its two-byte "> " echo marker.
+const LINE: usize = INPUT + 2;
 const LOG: usize = 48;
 const HISTORY: usize = 16;
 
@@ -18,14 +20,14 @@ pub enum Tone {
 
 #[derive(Clone, Copy)]
 pub struct Line {
-    buf: [u8; INPUT],
+    buf: [u8; LINE],
     len: usize,
     pub tone: Tone,
 }
 
 impl Line {
     pub const EMPTY: Self = Self {
-        buf: [0; INPUT],
+        buf: [0; LINE],
         len: 0,
         tone: Tone::Text,
     };
@@ -50,7 +52,7 @@ impl Line {
 
 impl Write for Line {
     fn write_str(&mut self, text: &str) -> fmt::Result {
-        for byte in text.bytes().take(INPUT - self.len) {
+        for byte in text.bytes().take(LINE - self.len) {
             self.buf[self.len] = if byte.is_ascii_graphic() || byte == b' ' {
                 byte
             } else {
@@ -736,6 +738,32 @@ mod tests {
         model.prompt.replace(b"theme e");
         model.event(Key::Tab, &system);
         assert_eq!(model.prompt.bytes(), b"theme ember");
+    }
+
+    #[test]
+    fn completion_ignores_case_like_command_lookup() {
+        let system = Services::default();
+        let mut model = Console::new();
+        model.prompt.replace(b"SYS");
+        model.event(Key::Tab, &system);
+        assert_eq!(model.prompt.bytes(), b"sysinfo ");
+        model.prompt.replace(b"Theme E");
+        model.event(Key::Tab, &system);
+        assert_eq!(model.prompt.bytes(), b"Theme ember");
+        assert_eq!(model.event(Key::Enter, &system), Change::Full);
+        assert_eq!(model.theme, Theme::Ember);
+    }
+
+    #[test]
+    fn a_full_prompt_is_echoed_without_truncation() {
+        let system = Services::default();
+        let mut model = Console::new();
+        let mut input = [b'x'; INPUT];
+        input[..5].copy_from_slice(b"echo ");
+        model.prompt.replace(&input);
+        model.event(Key::Enter, &system);
+        assert_eq!(&model.row(0).unwrap().bytes()[2..], input);
+        assert_eq!(model.row(1).unwrap().bytes(), &input[5..]);
     }
 
     #[test]
