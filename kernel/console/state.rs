@@ -171,9 +171,14 @@ pub enum View {
     Memory,
     Boot,
     Devices,
+    Map,
 }
 
 impl View {
+    pub fn searchable(self) -> bool {
+        matches!(self, Self::Help | Self::History)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Activity => "activity",
@@ -184,6 +189,7 @@ impl View {
             Self::Memory => "memory map",
             Self::Boot => "boot handoff",
             Self::Devices => "active interfaces",
+            Self::Map => "physical memory map",
         }
     }
 }
@@ -222,7 +228,6 @@ pub struct Console {
     pub view: View,
     pub theme: Theme,
     pub zoom: u32,
-    pub motion: bool,
     pub scroll: usize,
     pub selected: usize,
     pub hint: Line,
@@ -242,7 +247,6 @@ impl Console {
             view: View::Activity,
             theme: Theme::Graphite,
             zoom: 1,
-            motion: true,
             scroll: 0,
             selected: 0,
             hint: Line::EMPTY,
@@ -304,33 +308,77 @@ impl Console {
 
     fn refresh_help(&mut self) {
         self.panel.clear();
-        for command in commands::REGISTRY {
-            let query = self.filter.bytes();
-            if matches_text(command.name.as_bytes(), query)
-                || matches_text(command.description.as_bytes(), query)
-            {
-                self.detail(
-                    Tone::Text,
-                    format_args!("{:<22} {}", command.usage, command.description),
-                );
+        for priority in 0..4 {
+            for command in commands::REGISTRY {
+                let query = self.filter.bytes();
+                let name = command.name.as_bytes();
+                let rank = if name.eq_ignore_ascii_case(query) {
+                    0
+                } else if name
+                    .get(..query.len())
+                    .is_some_and(|head| head.eq_ignore_ascii_case(query))
+                {
+                    1
+                } else if subsequence(name, query) {
+                    2
+                } else if matches_text(command.description.as_bytes(), query) {
+                    3
+                } else {
+                    continue;
+                };
+                if rank == priority {
+                    self.detail(
+                        Tone::Text,
+                        format_args!("{:<20} {}", command.usage, command.description),
+                    );
+                }
             }
         }
-        if self.panel.len == 0 {
-            self.detail(Tone::Muted, format_args!("No matching commands."));
-        }
-        self.scroll = 0;
+        self.finish_search("No matching commands.");
     }
 
     pub fn history(&mut self) -> Change {
         self.open(View::History);
+        self.refresh_history();
+        Change::Report
+    }
+
+    fn refresh_history(&mut self) {
+        self.panel.clear();
         for index in (0..self.history.len).rev() {
             let line = *self.history.get(index).unwrap();
-            self.detail(Tone::Text, format_args!("{}", line.text()));
+            if matches_text(line.bytes(), self.filter.bytes()) {
+                self.panel.push(line);
+            }
         }
+        self.finish_search("No matching history.");
+    }
+
+    fn finish_search(&mut self, empty: &str) {
         if self.panel.len == 0 {
-            self.detail(Tone::Muted, format_args!("No commands recorded."));
+            self.detail(Tone::Muted, format_args!("{empty}"));
         }
-        Change::Report
+        self.selected = 0;
+    }
+
+    pub fn suggestion(&self) -> Option<&[u8]> {
+        let typed = self.prompt.bytes();
+        if typed.is_empty() || self.prompt.cursor != typed.len() {
+            return None;
+        }
+        let starts = |candidate: &[u8]| {
+            candidate.len() > typed.len() && candidate[..typed.len()].eq_ignore_ascii_case(typed)
+        };
+        (0..self.history.len)
+            .rev()
+            .filter_map(|index| self.history.get(index).map(Line::bytes))
+            .chain(
+                commands::REGISTRY
+                    .iter()
+                    .map(|command| command.name.as_bytes()),
+            )
+            .find(|candidate| starts(candidate))
+            .map(|candidate| &candidate[typed.len()..])
     }
 
     fn recall(&mut self, older: bool) {
@@ -429,6 +477,11 @@ impl Console {
     pub fn event(&mut self, key: Key, services: &Services) -> Change {
         self.fresh = 0;
         self.hint = Line::EMPTY;
+        match key {
+            Key::Palette => return self.help(""),
+            Key::SearchHistory => return self.history(),
+            _ => {}
+        }
         if let Key::Function(number) = key {
             return match number {
                 1 => self.help(""),
@@ -446,6 +499,15 @@ impl Console {
         }
         match key {
             Key::Enter => self.submit(services),
+            Key::Right if self.suggestion().is_some() => {
+                let mut edit = self.prompt;
+                for &byte in self.suggestion().unwrap() {
+                    edit.apply(Key::Char(byte));
+                }
+                self.prompt = edit;
+                self.recalled = None;
+                Change::Prompt
+            }
             Key::Tab => {
                 self.complete();
                 Change::Prompt
@@ -478,31 +540,55 @@ impl Console {
             self.open(View::Activity);
             return Change::Panel;
         }
-        if self.view == View::History {
-            if key == Key::Enter && self.history.len > 0 {
-                let line = *self.panel.get(self.selected).unwrap();
-                self.prompt.replace(line.bytes());
-                self.recalled = None;
-                self.open(View::Activity);
-                return Change::Panel;
-            }
-            if matches!(key, Key::Up | Key::Down | Key::PageUp | Key::PageDown) {
-                self.selected = scroll(
-                    self.selected,
-                    self.rows(),
-                    matches!(key, Key::Down | Key::PageDown),
-                    if matches!(key, Key::PageUp | Key::PageDown) {
-                        5
+        if self.view.searchable() {
+            match key {
+                Key::Enter => {
+                    let Some(line) = self.panel.get(self.selected) else {
+                        return Change::None;
+                    };
+                    if line.tone == Tone::Muted {
+                        return Change::None;
+                    }
+                    let bytes = if self.view == View::Help {
+                        line.text()
+                            .split_ascii_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .as_bytes()
                     } else {
-                        1
-                    },
-                );
-                return Change::Panel;
+                        line.bytes()
+                    };
+                    self.prompt.replace(bytes);
+                    if self.view == View::Help {
+                        self.prompt.apply(Key::Char(b' '));
+                    }
+                    self.recalled = None;
+                    self.open(View::Activity);
+                    return Change::Panel;
+                }
+                Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
+                    self.selected = scroll(
+                        self.selected,
+                        self.rows(),
+                        matches!(key, Key::Down | Key::PageDown),
+                        if matches!(key, Key::PageUp | Key::PageDown) {
+                            5
+                        } else {
+                            1
+                        },
+                    );
+                    return Change::Panel;
+                }
+                key if self.filter.apply(key) => {
+                    if self.view == View::Help {
+                        self.refresh_help();
+                    } else {
+                        self.refresh_history();
+                    }
+                    return Change::Panel;
+                }
+                _ => return Change::None,
             }
-        }
-        if self.view == View::Help && self.filter.apply(key) {
-            self.refresh_help();
-            return Change::Panel;
         }
         match key {
             Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
@@ -518,7 +604,6 @@ impl Console {
                 );
                 Change::Panel
             }
-            Key::Enter if self.view == View::Help => Change::Report,
             _ => Change::None,
         }
     }
@@ -537,6 +622,13 @@ fn matches_text(text: &[u8], query: &[u8]) -> bool {
         || text
             .windows(query.len())
             .any(|part| part.eq_ignore_ascii_case(query))
+}
+
+fn subsequence(text: &[u8], query: &[u8]) -> bool {
+    let mut chars = text.iter();
+    query
+        .iter()
+        .all(|needle| chars.by_ref().any(|ch| ch.eq_ignore_ascii_case(needle)))
 }
 
 #[cfg(test)]
@@ -584,6 +676,25 @@ mod tests {
         model.prompt.replace(b"theme e");
         model.event(Key::Tab, &system);
         assert_eq!(model.prompt.bytes(), b"theme ember");
+    }
+
+    #[test]
+    fn palette_stages_confirmation_commands_without_running_them() {
+        let mut state = Console::new();
+        let services = Services::default();
+        state.help("hlt");
+        assert!(state.row(0).unwrap().text().starts_with("halt "));
+        assert_eq!(state.event(Key::Enter, &services), Change::Panel);
+        assert_eq!(state.prompt.bytes(), b"halt ");
+        assert_eq!(state.rows(), 0);
+        assert_eq!(state.event(Key::Enter, &services), Change::Report);
+    }
+
+    #[test]
+    fn palette_ranks_names_before_description_matches() {
+        let mut state = Console::new();
+        state.help("memory");
+        assert!(state.row(0).unwrap().text().starts_with("memory "));
     }
 
     #[test]

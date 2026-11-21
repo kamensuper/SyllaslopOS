@@ -12,7 +12,6 @@ import tty
 
 TIMEOUT = 15
 ANSI = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
-SETTLE_SECONDS = 0.24
 BACKDROP = bytes((12, 13, 17))
 
 
@@ -111,11 +110,10 @@ class Guest:
 
 def graphical(guest, resolution):
     guest.wait_for(b"SLC VIDEO " + resolution.encode(), 0)
-    time.sleep(SETTLE_SECONDS)
     home = guest.screen("console")
     pixels = home.split(b"\n", 3)[3]
     background_fraction = pixels.count(BACKDROP) * 3 / len(pixels)
-    assert background_fraction > 0.985, f"idle framebuffer background is {background_fraction:.3%}"
+    assert background_fraction > 0.93, f"idle framebuffer background is {background_fraction:.3%}"
     time.sleep(0.1)
     assert home == guest.screen("idle-settled"), "idle display was still changing"
 
@@ -123,30 +121,38 @@ def graphical(guest, resolution):
     start = len(guest.serial_log)
     guest.key("ret", delay=0)
     guest.wait_for(b"SYSTEM OVERVIEW", start)
-    frames = []
-    for index in range(8):
-        frames.append(guest.screen(f"motion-{index:02d}"))
-        time.sleep(0.016)
-    time.sleep(SETTLE_SECONDS)
     system = guest.screen("sysinfo")
     assert home != system
-    assert len(set(frames + [system])) >= 3, "missing successive transition frames"
+    time.sleep(0.2)
+    assert system == guest.screen("sysinfo-stable"), "view changed without input"
     guest.key("esc")
 
     start = len(guest.serial_log)
-    guest.ps2("help\n")
-    guest.wait_for(b"command reference", start)
-    guest.ps2("memory\n")
+    guest.key("ctrl-p")
+    guest.wait_for(b"[command reference]", start)
+    guest.ps2("mmap")
+    time.sleep(0.06)
+    assert home != guest.screen("palette")
+    start = len(guest.serial_log)
+    guest.key("ret")
+    guest.wait_for(b"slc> memmap ", start)
+    start = len(guest.serial_log)
+    guest.key("ret")
+    guest.wait_for(b"PHYSICAL MEMORY MAP", start)
+    guest.wait_for(b"END (EXCLUSIVE)", start)
+    guest.screen("memmap")
+    guest.key("esc")
+
+    start = len(guest.serial_log)
+    guest.ps2("help memory\n")
     guest.wait_for(b"[command reference: memory]", start)
     guest.wait_for(b"Summarize the firmware memory map", start)
-    time.sleep(SETTLE_SECONDS)
     assert home != guest.screen("help")
     guest.key("esc")
 
     start = len(guest.serial_log)
     guest.ps2("echo guest-input\n")
     guest.wait_for(b"\r\nguest-input\r\n", start)
-    time.sleep(SETTLE_SECONDS)
     assert home != guest.screen("output")
 
     start = len(guest.serial_log)
@@ -173,18 +179,31 @@ def graphical(guest, resolution):
     start = len(guest.serial_log)
     guest.ps2("clear\n")
     guest.wait_for(b"Activity cleared", start)
-    time.sleep(SETTLE_SECONDS)
     assert decorated != guest.screen("cleared")
 
+    guest.ps2("ca")
+    time.sleep(0.06)
+    guest.screen("suggestion")
+    guest.key("right")
     start = len(guest.serial_log)
-    guest.ps2("motion off\n")
-    guest.wait_for(b"Motion: off.", start)
+    guest.ps2(" 6")
+    guest.key("shift-equal")
+    guest.ps2("7\n")
+    guest.wait_for(b"= 13", start)
+    guest.screen("calculator")
+
     start = len(guest.serial_log)
-    guest.key("f2", delay=0)
-    guest.wait_for(b"SYSTEM OVERVIEW", start)
-    immediate = guest.screen("motion-off")
-    time.sleep(SETTLE_SECONDS)
-    assert immediate == guest.screen("motion-off-settled"), "motion off did not snap"
+    guest.key("ctrl-r")
+    guest.wait_for(b"[command history]", start)
+    guest.ps2("guest-input")
+    time.sleep(0.06)
+    guest.screen("history")
+    start = len(guest.serial_log)
+    guest.key("ret")
+    guest.wait_for(b"slc> echo guest-input", start)
+    start = len(guest.serial_log)
+    guest.key("ret")
+    guest.wait_for(b"\r\nguest-input\r\n", start)
 
 
 def recovery(guest):
@@ -194,6 +213,9 @@ def recovery(guest):
         (b"\x1dhelp cpu\r", b"Read processor information"),
         (b"\x1dfoo\r", b"Unknown command: foo"),
         (b"echo recovery\r", b"\r\nrecovery\r\n"),
+        (b"base 0xff\r", b"bin  0b11111111"),
+        (b"\x12recovery\r", b"slc> echo recovery"),
+        (b"\r", b"\r\nrecovery\r\n"),
         (b"clear\r", b"Activity cleared"),
     ]:
         start = len(guest.serial_log)

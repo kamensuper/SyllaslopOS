@@ -17,6 +17,8 @@ pub enum Key {
     PageUp,
     PageDown,
     Clear,
+    Palette,
+    SearchHistory,
     Erase,
     Function(u8),
 }
@@ -196,6 +198,8 @@ impl Set1 {
         if self.controls != 0 {
             return match ascii.to_ascii_lowercase() {
                 b'l' => Some(Key::Clear),
+                b'p' => Some(Key::Palette),
+                b'r' => Some(Key::SearchHistory),
                 b'u' | b'c' => Some(Key::Erase),
                 _ => None,
             };
@@ -264,6 +268,8 @@ impl SerialKeys {
             0x08 | 0x7f => Some(Key::Backspace),
             b'\t' => Some(Key::Tab),
             0x0c => Some(Key::Clear),
+            0x10 => Some(Key::Palette),
+            0x12 => Some(Key::SearchHistory),
             0x03 | 0x15 => Some(Key::Erase),
             0x1d => Some(Key::Escape),
             b' '..=b'~' => Some(Key::Char(byte)),

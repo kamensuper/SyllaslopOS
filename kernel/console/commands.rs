@@ -3,7 +3,7 @@ use core::arch::x86_64::__cpuid;
 use super::state::{Change, Console, Theme, Tone, View};
 use crate::bootinfo::{BootInfo, Memory, Video};
 
-pub const VERSION: &str = "0.1.0";
+pub const VERSION: &str = "0.2.0";
 
 pub struct Cpu {
     vendor: [u8; 12],
@@ -96,7 +96,7 @@ pub struct Services {
     pub loader: Option<&'static str>,
     pub boot_blob: Option<(u64, usize)>,
     pub keyboard: bool,
-    pub motion_clock: bool,
+    boot: Option<BootInfo<'static>>,
     pub frame_bytes: u64,
     pub initial_bytes: u64,
     pub last_draw_bytes: u64,
@@ -113,6 +113,7 @@ impl Services {
         });
         Self {
             cpu: Cpu::read(),
+            boot: boot.copied(),
             memory,
             video,
             loader,
@@ -263,12 +264,36 @@ pub static REGISTRY: &[Command] = &[
         zoom,
     ),
     cmd(
-        "motion",
-        "motion [on|off]",
-        "Enable or disable short view transitions",
-        Args::Choices(&["on", "off"]),
-        Need::Graphics,
-        motion,
+        "calc",
+        "calc <expression>",
+        "Compute integer arithmetic and bitwise expressions",
+        Args::Text,
+        Need::Base,
+        calc,
+    ),
+    cmd(
+        "base",
+        "base <expression>",
+        "Show decimal, hex, octal and binary",
+        Args::Text,
+        Need::Base,
+        base,
+    ),
+    cmd(
+        "memmap",
+        "memmap [page]",
+        "List physical ranges from the bootloader",
+        Args::Text,
+        Need::MemoryMap,
+        memmap,
+    ),
+    cmd(
+        "keys",
+        "keys",
+        "Show console keyboard shortcuts",
+        Args::None,
+        Need::Base,
+        keys,
     ),
     cmd(
         "version",
@@ -620,21 +645,94 @@ fn zoom(console: &mut Console, _: &Services, args: &str) -> Change {
     Change::Full
 }
 
-fn motion(console: &mut Console, services: &Services, args: &str) -> Change {
-    if !services.motion_clock {
+fn calc(console: &mut Console, _: &Services, args: &str) -> Change {
+    print_number(console, args, false)
+}
+
+fn base(console: &mut Console, _: &Services, args: &str) -> Change {
+    print_number(console, args, true)
+}
+
+fn print_number(console: &mut Console, args: &str, all_bases: bool) -> Change {
+    match super::numbers::evaluate(args) {
+        Ok(value) if all_bases => {
+            let sign = if value < 0 { "-" } else { "" };
+            let magnitude = value.unsigned_abs();
+            console.log(Tone::Text, format_args!("dec  {value}"));
+            console.log(Tone::Text, format_args!("hex  {sign}0x{magnitude:x}"));
+            console.log(Tone::Text, format_args!("oct  {sign}0o{magnitude:o}"));
+            console.log(Tone::Text, format_args!("bin  {sign}0b{magnitude:b}"));
+        }
+        Ok(value) => console.log(Tone::Success, format_args!("= {value}")),
+        Err(reason) => console.log(Tone::Error, format_args!("{reason}")),
+    }
+    Change::Report
+}
+
+fn memmap(console: &mut Console, services: &Services, arg: &str) -> Change {
+    const PAGE: usize = 24;
+    let Some(regions) = services.boot.as_ref().and_then(BootInfo::regions) else {
         console.log(
-            Tone::Muted,
-            format_args!("Transitions are unavailable without a calibrated animation clock."),
+            Tone::Error,
+            format_args!("The bootloader memory map is unavailable."),
         );
         return Change::Report;
+    };
+    let count = services.memory.map_or(0, |memory| memory.regions);
+    let pages = count.div_ceil(PAGE).max(1);
+    let page = if arg.is_empty() {
+        Some(1)
+    } else {
+        arg.parse::<usize>().ok()
+    };
+    let Some(page) = page.filter(|page| (1..=pages).contains(page)) else {
+        console.log(
+            Tone::Error,
+            format_args!("Use memmap <page> with a page from 1 through {pages}."),
+        );
+        return Change::Report;
+    };
+    console.open(View::Map);
+    console.detail(
+        Tone::Accent,
+        format_args!("PHYSICAL MEMORY MAP  /  {page} of {pages}"),
+    );
+    console.detail(
+        Tone::Muted,
+        format_args!("START                END (EXCLUSIVE)      TYPE"),
+    );
+    for range in regions.skip((page - 1) * PAGE).take(PAGE).flatten() {
+        let kind = match range.kind {
+            1 => "usable",
+            2 => "reserved",
+            3 => "ACPI reclaimable",
+            4 => "ACPI NVS",
+            5 => "bad RAM",
+            _ => "other",
+        };
+        console.detail(
+            Tone::Text,
+            format_args!("{:016x}     {:016x}     {kind}", range.start, range.end),
+        );
     }
-    match args {
-        "on" => console.motion = true,
-        "off" => console.motion = false,
-        _ => {}
+    Change::Report
+}
+
+fn keys(console: &mut Console, _: &Services, _: &str) -> Change {
+    console.open(View::System);
+    console.detail(Tone::Accent, format_args!("KEYBOARD"));
+    for line in [
+        "Ctrl+P / F1    find a command",
+        "Ctrl+R         search this boot's history",
+        "Right          accept inline suggestion at end",
+        "Tab            complete command or argument",
+        "Up / Down      recall history or select a match",
+        "PgUp / PgDn    scroll output or page through matches",
+        "Ctrl+L         clear output",
+        "Esc            return to prompt (COM1: Ctrl+])",
+    ] {
+        console.detail(Tone::Text, format_args!("{line}"));
     }
-    let value = if console.motion { "on" } else { "off" };
-    console.log(Tone::Text, format_args!("Motion: {value}."));
     Change::Report
 }
 

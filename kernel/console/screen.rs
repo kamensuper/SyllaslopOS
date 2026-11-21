@@ -1,17 +1,14 @@
-use crate::graphics::{mix, Color, Font, Framebuffer, Ink, Rect, BODY, SMALL};
+use crate::graphics::{Color, Font, Framebuffer, Ink, Rect, BODY, SMALL};
 
 use super::state::{Change, Console, Theme, Tone, View};
 
 const BACK: Color = Color(12, 13, 17);
 const TEXT: Color = Color(229, 229, 237);
 const MUTED: Color = Color(151, 151, 171);
-const WORDMARK: Color = Color(189, 182, 204);
+const FIELD: Color = Color(23, 23, 31);
+const GHOST: Color = Color(131, 129, 151);
 const GOOD: Color = Color(164, 202, 177);
 const ERROR: Color = Color(229, 163, 170);
-const FRAME_MS: u64 = 24;
-const REVEAL_MS: u64 = 180;
-const SETTLE: u32 = 6;
-
 struct Style {
     accent: Color,
     mono: bool,
@@ -44,46 +41,32 @@ impl Style {
 
 struct Layout {
     column: Rect,
-    anchor_x: u32,
+    input: Rect,
     input_y: u32,
-    idle: bool,
 }
 
 impl Layout {
-    fn new(bounds: Rect, idle: bool, lift: u32) -> Self {
+    fn new(bounds: Rect, idle: bool) -> Self {
         let width = (bounds.w - 64).min(660);
         let column = Rect::new((bounds.w - width) / 2, 0, width, bounds.h);
-        let (anchor_x, y) = if idle {
-            (bounds.w / 2 - 89, bounds.h * 44 / 100)
+        let input_y = if idle {
+            bounds.h * 45 / 100
         } else {
-            (column.x, (bounds.h / 9).max(56))
+            (bounds.h / 9).max(56)
         };
+        let prompt_width = if idle { 448 } else { width };
+        let input = Rect::new((bounds.w - prompt_width) / 2, input_y, prompt_width, 84);
         Self {
             column,
-            anchor_x,
-            input_y: y + lift,
-            idle,
+            input,
+            input_y,
         }
-    }
-
-    fn prompt(&self) -> Rect {
-        Rect::new(
-            self.anchor_x,
-            self.input_y,
-            if self.idle {
-                self.column.w - (self.anchor_x - self.column.x)
-            } else {
-                self.column.w
-            },
-            64,
-        )
     }
 
     fn output(&self, view: View) -> Rect {
         let y = self.input_y
             + match view {
-                View::Activity => 69,
-                View::Help => 69,
+                View::Activity | View::Help | View::History => 90,
                 _ => 0,
             };
         Rect::new(
@@ -106,90 +89,54 @@ pub struct Screen {
     damage: Damage,
     idle: bool,
     view: View,
-    reveal_start: Option<u64>,
-    next_frame: u64,
 }
 
 impl Screen {
-    pub fn new(frame: &mut Framebuffer, state: &Console, now: Option<u64>) -> Self {
+    pub fn new(frame: &mut Framebuffer, state: &Console) -> Self {
         let mut screen = Self {
             damage: Damage::default(),
             idle: true,
             view: View::Activity,
-            reveal_start: now,
-            next_frame: now.unwrap_or(0) + FRAME_MS,
         };
         frame.fill(frame.bounds(), BACK);
-        screen.paint(frame, state, now, true);
+        screen.paint(frame, state, true);
         screen
     }
 
-    pub fn change(
-        &mut self,
-        frame: &mut Framebuffer,
-        state: &Console,
-        change: Change,
-        now: Option<u64>,
-    ) {
+    pub fn change(&mut self, frame: &mut Framebuffer, state: &Console, change: Change) {
         let idle = state.view == View::Activity && state.rows() == 0;
         let reflowed = idle != self.idle || state.view != self.view;
         self.idle = idle;
         self.view = state.view;
-        if !state.motion || now.is_none() {
-            self.reveal_start = None;
-        } else if reflowed {
-            self.reveal_start = now;
-            self.next_frame = now.unwrap_or(0) + FRAME_MS;
-        }
-        self.paint(frame, state, now, reflowed || change != Change::Prompt);
+        self.paint(frame, state, reflowed || change != Change::Prompt);
     }
 
-    pub fn animating(&self) -> bool {
-        self.reveal_start.is_some()
-    }
-
-    pub fn tick(&mut self, frame: &mut Framebuffer, state: &Console, now: u64) {
-        if self.reveal_start.is_none() || now < self.next_frame {
-            return;
-        }
-        self.next_frame = now + FRAME_MS;
-        self.paint(frame, state, Some(now), true);
-    }
-
-    fn paint(&mut self, frame: &mut Framebuffer, state: &Console, now: Option<u64>, scene: bool) {
-        let (alpha, lift) = self
-            .reveal_start
-            .zip(now)
-            .map_or((255, 0), |(start, now)| reveal(now.saturating_sub(start)));
-        let transitioning = self.reveal_start.is_some();
-        let scene = scene || transitioning;
-        if alpha == 255 && lift == 0 {
-            self.reveal_start = None;
-        }
-        let layout = Layout::new(frame.bounds(), self.idle, lift);
+    fn paint(&mut self, frame: &mut Framebuffer, state: &Console, scene: bool) {
+        let layout = Layout::new(frame.bounds(), self.idle);
         let style = Style::new(state.theme);
         erase(frame, &mut self.damage.prompt);
         if scene {
             erase(frame, &mut self.damage.wordmark);
             erase(frame, &mut self.damage.output);
             if self.idle {
-                let mark = b"syllaslop";
-                let width = mark.len() as u32 * SMALL.w;
-                let at = Rect::new(
-                    (frame.bounds().w - width) / 2,
-                    layout.input_y - 44,
-                    width,
-                    SMALL.h,
+                let at = Rect::new(layout.input.x + 16, layout.input_y - 60, 162, 36);
+                text(frame, at, b"sylla", &BODY, 2, TEXT);
+                text(
+                    frame,
+                    Rect::new(at.x + 90, at.y, 72, at.h),
+                    b"slop",
+                    &BODY,
+                    2,
+                    style.accent,
                 );
-                text(frame, at, mark, &SMALL, 1, mix(BACK, WORDMARK, alpha));
                 self.damage.wordmark = Some(at);
             } else {
-                self.damage.output = output(frame, &layout, state, &style, alpha);
+                self.damage.output = output(frame, &layout, state, &style);
             }
         }
-        if matches!(state.view, View::Activity | View::Help) {
-            let rect = layout.prompt();
-            self.damage.prompt = Some(prompt(frame, rect, state, &style));
+        if state.view == View::Activity || state.view.searchable() {
+            prompt(frame, layout.input, state, &style, self.idle);
+            self.damage.prompt = Some(layout.input);
         }
     }
 }
@@ -200,93 +147,97 @@ fn erase(frame: &mut Framebuffer, damage: &mut Option<Rect>) {
     }
 }
 
-fn reveal(elapsed: u64) -> (u8, u32) {
-    let left = REVEAL_MS.saturating_sub(elapsed);
-    let remaining = left * left * 255 / (REVEAL_MS * REVEAL_MS);
-    (
-        (255 - remaining) as u8,
-        (u64::from(SETTLE) * remaining).div_ceil(255) as u32,
-    )
-}
-
 fn text(frame: &mut Framebuffer, at: Rect, bytes: &[u8], font: &Font, scale: u32, fore: Color) {
     frame.text(at, bytes, font, scale, Ink { fore, back: BACK });
 }
 
-fn prompt(frame: &mut Framebuffer, at: Rect, state: &Console, style: &Style) -> Rect {
-    let (edit, placeholder) = if state.view == View::Help {
-        (&state.filter, b"filter commands".as_slice())
-    } else {
-        (&state.prompt, b"type a command".as_slice())
+fn prompt(frame: &mut Framebuffer, at: Rect, state: &Console, style: &Style, idle: bool) {
+    let (edit, placeholder, symbol) = match state.view {
+        View::Help => (&state.filter, b"find a command".as_slice(), b"/"),
+        View::History => (&state.filter, b"find in history".as_slice(), b"/"),
+        _ => (&state.prompt, b"type a command".as_slice(), b">"),
     };
     let scale = state.zoom;
     let cell = BODY.w * scale;
     let height = BODY.h * scale;
-    let field = Rect::new(at.x + cell + 14, at.y, at.w - cell - 14, height);
-    let visible = (field.w / cell) as usize;
-    let offset = edit.cursor.saturating_sub(visible.saturating_sub(1));
-    let bytes = &edit.bytes()[offset..];
+    let surface = Rect::new(at.x, at.y, at.w, height + 24);
+    frame.fill(surface, FIELD);
+    let y = at.y + 12;
+    let field = Rect::new(at.x + cell + 29, y, at.w - cell - 45, height);
     let count = (field.w / cell) as usize;
-
-    text(
+    let offset = edit.cursor.saturating_sub(count.saturating_sub(1));
+    let typed = &edit.bytes()[offset..];
+    let cursor = field.x + (edit.cursor - offset) as u32 * cell;
+    let draw = |frame: &mut Framebuffer, rect: Rect, bytes: &[u8], fore| {
+        frame.text(rect, bytes, &BODY, scale, Ink { fore, back: FIELD });
+    };
+    draw(
         frame,
-        Rect::new(at.x, at.y, cell, height),
-        b">",
-        &BODY,
-        scale,
+        Rect::new(at.x + 15, y, cell, height),
+        symbol,
         style.accent,
     );
-    if bytes.is_empty() {
-        text(
+    if typed.is_empty() {
+        draw(
             frame,
-            Rect::new(field.x + 7, field.y, field.w - 7, height),
+            Rect::new(field.x + 6, y, field.w - 6, height),
             placeholder,
-            &BODY,
-            scale,
             MUTED,
         );
     } else {
-        text(
+        let end = typed
+            .iter()
+            .position(|&b| b == b' ')
+            .unwrap_or(typed.len())
+            .min(count);
+        if state.view == View::Activity && offset == 0 {
+            draw(frame, field, &typed[..end], style.accent);
+            let prefix = end as u32 * cell;
+            draw(
+                frame,
+                Rect::new(field.x + prefix, y, field.w - prefix, height),
+                &typed[end..],
+                TEXT,
+            );
+        } else {
+            draw(frame, field, typed, TEXT);
+        }
+    }
+    let suggestion = if state.view == View::Activity {
+        state.suggestion()
+    } else {
+        None
+    };
+    if let Some(suffix) = suggestion {
+        let shift = cursor - field.x;
+        draw(
             frame,
-            field,
-            &bytes[..bytes.len().min(count)],
-            &BODY,
-            scale,
-            TEXT,
+            Rect::new(cursor, y, field.w - shift, height),
+            suffix,
+            GHOST,
         );
     }
-    let caret = field.x + (edit.cursor - offset) as u32 * cell;
-    frame.fill(Rect::new(caret, at.y + 2, 2, height - 4), style.accent);
+    frame.fill(Rect::new(cursor, y + 2, 1, height - 4), style.accent);
 
     let hint: &[u8] = if !state.hint.bytes().is_empty() {
         state.hint.bytes()
-    } else if state.view == View::Help {
-        b"esc  back     pgup / pgdn  scroll"
+    } else if state.view.searchable() {
+        b"up/down select   enter stage   esc back"
+    } else if suggestion.is_some() {
+        b"right accept suggestion"
+    } else if idle {
+        b"ctrl+p commands    ctrl+r history"
     } else {
         b""
     };
-    let hint_y = at.y + height + 10;
     text(
         frame,
-        Rect::new(field.x, hint_y, field.w, SMALL.h),
+        Rect::new(at.x + 15, surface.y + surface.h + 7, at.w - 30, SMALL.h),
         hint,
         &SMALL,
         1,
         MUTED,
     );
-    let text_width = if bytes.is_empty() {
-        7 + (placeholder.len() as u32 * cell).min(field.w - 7)
-    } else {
-        bytes.len().min(count) as u32 * cell
-    };
-    let hint_width = (hint.len() as u32 * SMALL.w).min(field.w);
-    let occupied_width = text_width.max(hint_width).max(caret - field.x + 2);
-    let occupied_height = if hint.is_empty() {
-        height
-    } else {
-        hint_y + SMALL.h - at.y
-    };
-    Rect::new(at.x, at.y, field.x - at.x + occupied_width, occupied_height)
 }
 
 fn output(
@@ -294,9 +245,8 @@ fn output(
     layout: &Layout,
     state: &Console,
     style: &Style,
-    alpha: u8,
 ) -> Option<Rect> {
-    if state.rows() == 0 || alpha == 0 {
+    if state.rows() == 0 {
         return None;
     }
     let area = layout.output(state.view);
@@ -326,7 +276,7 @@ fn output(
             let end = first(state.rows().saturating_sub(state.scroll));
             (end.saturating_sub(capacity), end)
         }
-        View::History => {
+        View::History | View::Help => {
             let selected = first(state.selected);
             (
                 selected
@@ -343,7 +293,7 @@ fn output(
         let line = state.row(usize::from(index)).unwrap();
         let offset = usize::from(offset);
         let bytes = &line.bytes()[offset..(offset + cols).min(line.bytes().len())];
-        let selected = state.view == View::History && usize::from(index) == state.selected;
+        let selected = state.view.searchable() && usize::from(index) == state.selected;
         let y = area.y + line_number as u32 * row_height;
         let fore = if selected {
             style.accent
@@ -357,23 +307,43 @@ fn output(
                 b">",
                 &SMALL,
                 1,
-                mix(BACK, fore, alpha),
+                fore,
             );
         }
-        text(
-            frame,
-            Rect::new(area.x, y, area.w, row_height),
-            bytes,
-            &BODY,
-            scale,
-            mix(BACK, fore, alpha),
-        );
+        if state.view == View::Help {
+            let command = 20usize.saturating_sub(offset).min(bytes.len());
+            text(
+                frame,
+                Rect::new(area.x, y, area.w, row_height),
+                &bytes[..command],
+                &BODY,
+                scale,
+                fore,
+            );
+            let indent = command as u32 * BODY.w * scale;
+            text(
+                frame,
+                Rect::new(area.x + indent, y, area.w - indent, row_height),
+                &bytes[command..],
+                &BODY,
+                scale,
+                MUTED,
+            );
+        } else {
+            text(
+                frame,
+                Rect::new(area.x, y, area.w, row_height),
+                bytes,
+                &BODY,
+                scale,
+                fore,
+            );
+        }
         bottom = y + row_height;
     }
 
     let hint = match state.view {
-        View::Activity | View::Help => b"".as_slice(),
-        View::History => b"up / down  select     enter  recall     esc  back",
+        View::Activity | View::Help | View::History => b"".as_slice(),
         _ => b"esc  back",
     };
     if !hint.is_empty() {
@@ -384,7 +354,7 @@ fn output(
             hint,
             &SMALL,
             1,
-            mix(BACK, MUTED, alpha),
+            MUTED,
         );
         bottom = y + SMALL.h;
     }
@@ -399,26 +369,16 @@ mod tests {
     fn idle_and_active_layouts_fit_both_resolutions_and_zoom() {
         for (w, h) in [(640, 480), (800, 600), (1024, 768), (4096, 2304)] {
             let bounds = Rect::new(0, 0, w, h);
-            let idle = Layout::new(bounds, true, SETTLE);
-            let work = Layout::new(bounds, false, SETTLE);
-            assert_eq!(idle.prompt().intersect(bounds), idle.prompt());
+            let idle = Layout::new(bounds, true);
+            let work = Layout::new(bounds, false);
+            assert_eq!(idle.input.intersect(bounds), idle.input);
             assert!(work.input_y < idle.input_y);
             assert_eq!(
                 work.output(View::Activity).intersect(bounds),
                 work.output(View::Activity)
             );
             assert!(work.output(View::History).w / (BODY.w * 2) >= 29);
-            assert!(work.prompt().y + work.prompt().h < work.output(View::Help).y);
+            assert!(work.input.y + work.input.h < work.output(View::Help).y);
         }
-    }
-
-    #[test]
-    fn reveal_starts_softly_and_settles_once() {
-        assert_eq!(reveal(0), (0, SETTLE));
-        let (alpha, lift) = reveal(REVEAL_MS / 2);
-        assert!(alpha > 128 && alpha < 255);
-        assert!(lift < SETTLE);
-        assert_eq!(reveal(REVEAL_MS), (255, 0));
-        assert_eq!(reveal(REVEAL_MS + 1_000), (255, 0));
     }
 }

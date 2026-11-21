@@ -159,3 +159,22 @@ The kernel still polls input while idle.
 recorded above. For the no-VGA case, run the existing recovery probe with
 `--qemu qemu-system-x86_64 -vga none` against the default ISO. This boot
 and timer path is verified on the BIOS QEMU guest.
+
+## SLC 0.2 · interactive command tools
+
+All transition and animation clock code was removed. The native console
+adds a ranked command finder (Ctrl+P), searchable boot-local history
+(Ctrl+R), inline completion, checked integer arithmetic and base formatting,
+and a paged view of the Multiboot physical memory map.
+
+`make -j4 test test-console` passed with 15 host tests, real PS/2 input
+at 1024×768 and 800×600, and COM1 recovery. The test opens the palette,
+stages a command, reads actual guest memory ranges, accepts a completion,
+computes a result, and recalls a filtered command. The immediate and
+later system-info captures match. The default ISO booted with VGA disabled
+and passed the same serial recovery checks.
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `build/kernel.elf` | 151,704 | `fc7367cc007514af793aa7257cac980536098a926689414c11ec600adfc0fd0d` |
+| `build/syllaslopos.iso` | 2,863,104 | `7e29d75ac3bf67ce4845f0f583867abb54b84a465251fc5199bc720dfea48597` |

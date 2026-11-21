@@ -1,5 +1,5 @@
-mod clock;
 mod commands;
+mod numbers;
 mod screen;
 mod state;
 
@@ -8,7 +8,6 @@ use crate::graphics::Framebuffer;
 use crate::input::{Key, Keyboard, SerialKeys};
 use crate::serial::Com1;
 
-use clock::Clock;
 use commands::Services;
 use screen::Screen;
 use state::{Change, Console, Line, Tone, View};
@@ -22,14 +21,8 @@ pub fn run(
     let video = framebuffer.as_ref().map(Framebuffer::video);
     let mut services = Services::collect(boot, video, keyboard.is_some());
     let mut console = Console::new();
-    let clock = video.and_then(|_| {
-        // SAFETY: the early BIOS console is on the boot CPU with IRQs masked.
-        // There is no other PIT channel 2 or speaker-port owner.
-        unsafe { Clock::calibrate() }
-    });
-    services.motion_clock = clock.is_some();
     let mut screen = framebuffer.as_mut().map(|frame| {
-        let screen = Screen::new(frame, &console, clock.as_ref().map(Clock::ms));
+        let screen = Screen::new(frame, &console);
         services.initial_bytes = frame.bytes_written();
         services.frame_bytes = services.initial_bytes;
         services.last_draw_bytes = services.initial_bytes;
@@ -71,7 +64,7 @@ pub fn run(
 
             if let (Some(frame), Some(screen)) = (framebuffer.as_mut(), screen.as_mut()) {
                 let before = frame.bytes_written();
-                screen.change(frame, &console, change, clock.as_ref().map(Clock::ms));
+                screen.change(frame, &console, change);
                 services.frame_bytes = frame.bytes_written();
                 services.last_draw_bytes = services.frame_bytes - before;
             }
@@ -110,24 +103,11 @@ pub fn run(
                     );
                     report(&mut serial, &console);
                     if let (Some(frame), Some(screen)) = (framebuffer.as_mut(), screen.as_mut()) {
-                        screen.change(
-                            frame,
-                            &console,
-                            Change::Report,
-                            clock.as_ref().map(Clock::ms),
-                        );
+                        screen.change(frame, &console, Change::Report);
                         services.frame_bytes = frame.bytes_written();
                     }
                 }
                 _ => {}
-            }
-        }
-        if let (Some(frame), Some(screen), Some(clock)) =
-            (framebuffer.as_mut(), screen.as_mut(), &clock)
-        {
-            if screen.animating() {
-                screen.tick(frame, &console, clock.ms());
-                services.frame_bytes = frame.bytes_written();
             }
         }
     }
@@ -135,7 +115,7 @@ pub fn run(
 
 fn report(serial: &mut Com1, console: &Console) {
     serial.write(b"\r\x1b[2K");
-    if console.view == View::Help && !console.filter.bytes().is_empty() {
+    if console.view.searchable() && !console.filter.bytes().is_empty() {
         message(
             serial,
             format_args!("[{}: {}]", console.view.label(), console.filter.text()),
@@ -148,17 +128,16 @@ fn report(serial: &mut Com1, console: &Console) {
     let range = match console.view {
         View::Activity => console.rows().saturating_sub(console.fresh)..console.rows(),
         View::History | View::Help => {
-            let start = if console.view == View::History {
-                console.selected
-            } else {
-                console.scroll
-            };
+            let start = console.selected;
             start..(start + 16).min(console.rows())
         }
         _ => console.scroll..console.rows(),
     };
     for index in range {
         if let Some(line) = console.row(index) {
+            if console.view.searchable() && index == console.selected {
+                serial.write(b"> ");
+            }
             serial.write(line.bytes());
             serial.write(b"\r\n");
         }
@@ -173,12 +152,12 @@ fn serial_prompt(serial: &mut Com1, console: &Console) {
             &console.prompt
         }
         View::Help => {
-            serial.write(b"find (Ctrl+] back)> ");
+            serial.write(b"commands (Enter stage, Ctrl+] back)> ");
             &console.filter
         }
         View::History => {
             serial.write(b"history (Enter recall, Ctrl+] back)> ");
-            return;
+            &console.filter
         }
         _ => {
             serial.write(b"Ctrl+] back> ");

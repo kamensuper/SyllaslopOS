@@ -25,6 +25,14 @@ pub struct Memory {
     pub usable_bytes: u64,
 }
 
+#[derive(Clone, Copy)]
+pub struct Region {
+    pub start: u64,
+    pub end: u64,
+    pub kind: u32,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootInfo<'a> {
     phys: u64,
     data: &'a [u8],
@@ -133,7 +141,7 @@ impl<'a> BootInfo<'a> {
         })
     }
 
-    fn memory_rows(&self) -> Option<impl Iterator<Item = &'a [u8]>> {
+    fn memory_rows(&self) -> Option<impl Iterator<Item = &'a [u8]> + 'a> {
         let raw = self.tag(6)?;
         let stride = word(raw, 0)? as usize;
         let version = word(raw, 4)?;
@@ -144,14 +152,24 @@ impl<'a> BootInfo<'a> {
         Some(entries.chunks_exact(stride))
     }
 
+    pub fn regions(&self) -> Option<impl Iterator<Item = Option<Region>> + 'a> {
+        Some(self.memory_rows()?.map(|row| {
+            let start = quad(row, 0)?;
+            Some(Region {
+                start,
+                end: start.checked_add(quad(row, 8)?)?,
+                kind: word(row, 16)?,
+            })
+        }))
+    }
+
     pub fn memory(&self) -> Option<Memory> {
         let mut memory = Memory::default();
-        for row in self.memory_rows()? {
+        for region in self.regions()? {
+            let region = region?;
             memory.regions += 1;
-            if word(row, 16)? == 1 {
-                let size = quad(row, 8)?;
-                quad(row, 0)?.checked_add(size)?;
-                memory.usable_bytes = memory.usable_bytes.checked_add(size)?;
+            if region.kind == 1 {
+                memory.usable_bytes = memory.usable_bytes.checked_add(region.end - region.start)?;
                 memory.usable_regions += 1;
             }
         }
@@ -159,18 +177,10 @@ impl<'a> BootInfo<'a> {
     }
 
     pub fn clear_of_ram(&self, start: u64, end: u64) -> bool {
-        let Some(mut rows) = self.memory_rows() else {
-            return false;
-        };
-        rows.all(|row| {
-            let Some(base) = quad(row, 0) else {
-                return false;
-            };
-            let Some(bound) = quad(row, 8).and_then(|size| base.checked_add(size)) else {
-                return false;
-            };
-            // EFI/BIOS gaps and reserved regions can contain a video aperture.
-            word(row, 16) == Some(2) || start >= bound || end <= base
+        self.regions().is_some_and(|mut regions| {
+            regions.all(|region| {
+                region.is_some_and(|r| r.kind == 2 || start >= r.end || end <= r.start)
+            })
         })
     }
 }

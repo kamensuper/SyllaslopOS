@@ -15,7 +15,9 @@ and Ctrl+] for returning from a view.
 | `sysinfo`, `cpu`, `memory`, `bootinfo`, `devices` | Inspect CPUID, the Multiboot2 handoff, framebuffer and active legacy interfaces |
 | `echo`, `clear` | Print ASCII text or reset the activity log |
 | `theme [name]`, `zoom [1\|2]` | Change palette or scale framebuffer text |
-| `motion [on\|off]` | Enable or disable short view transitions |
+| `calc <expression>`, `base <expression>` | Compute signed integer expressions or display a result in four bases |
+| `memmap [page]` | List physical ranges from the bootloader with exclusive end addresses |
+| `keys` | Show the keyboard controls |
 | `metrics` | Report actual framebuffer bytes written |
 | `version`, `about`, `uptime` | Read version, current scope or clock availability |
 | `halt confirm`, `reboot confirm` | Halt the boot CPU or request an i8042 reset |
@@ -36,24 +38,30 @@ The CPU and memory views share one focus policy. In history, Enter recalls
 a command for editing. In help, typing filters immediately and PgUp/PgDn
 moves through matches. Esc returns to the command prompt.
 
-At idle, the centered command input and one wordmark occupy a uniform
-near-black framebuffer. When a command produces output, the active layout
-uses a bounded reading column. Requested system views replace the prompt
-with the requested text and one return hint. Hints for search, history, and
-completion appear only in those contexts. Output wraps to visible columns
-and scrolls by logical lines.
+At idle, the near-black framebuffer shows a two-tone wordmark, a command
+field, and one shortcut line. Command results use a reading column.
+System views occupy that column on demand. Screen changes are immediate
+and use the existing clipped framebuffer renderer.
 
-A short reveal runs at startup and when entering or leaving a view. A new
-anchor settles over six pixels and result glyphs fade in over 180 ms.
-The renderer samples only while a reveal is active and stops scheduling
-frames at the endpoint. Input never waits for a fade. Typing redraws the
-previous and new prompt ink bounds. `motion off` snaps to the destination.
-The temporary animation clock calibrates TSC against PIT channel 2 on the
-BIOS boot CPU. When calibration is unavailable, updates snap as well.
+Ctrl+P, F1, and `help` use the same command finder. Exact and prefix
+matches appear before subsequence and description matches. Ctrl+R or
+`history` filters recent commands from the current boot. Arrow keys change
+the selection. Enter stages a selection in the editable prompt, and a
+separate Enter submits it. Esc returns to the prior draft. On COM1 use
+Ctrl+] for Esc.
 
-The [OpenCode v2.3.2 research and composition comparison](OPENCODE-V2-RESEARCH.md)
-records the reviewed source and why the centered idle/upper result layout
-was chosen.
+In the command field, nonempty input can expose a muted inline suffix.
+Suggestions come from this boot's history, then command names. Right
+accepts the entire suggestion when the caret is at the end of the field.
+Tab still performs command and argument completion.
+
+The calculator accepts decimal, `0x` hex, `0o` octal, and `0b` binary.
+Precedence is unary minus, `* / %`, `+ -`, `&`, `^`, then `|`.
+Parentheses override precedence. Operations use checked signed 64-bit
+integers and report invalid syntax, overflow, or division by zero.
+
+See [CLI references and choices](CLI-RESEARCH.md) and the
+[earlier OpenCode source study](OPENCODE-V2-RESEARCH.md).
 
 ## Implementation files
 
@@ -61,9 +69,9 @@ was chosen.
 | --- | --- |
 | Boot and handoff | `arch/x86_64/boot.S`, `arch/x86_64/linker.ld`, `boot/grub/grub.cfg`, `kernel/main.rs`, `kernel/bootinfo.rs` |
 | Input and services | `kernel/input.rs`, `kernel/io.rs`, `kernel/serial.rs`, `kernel/console/commands.rs` |
-| Console model and renderer | `kernel/console/{mod,state,screen,clock}.rs`, `kernel/graphics/{mod,framebuffer}.rs`, bitmap masks and license under `kernel/graphics/assets/` |
+| Console model and renderer | `kernel/console/{mod,state,screen,numbers}.rs`, `kernel/graphics/{mod,framebuffer}.rs`, bitmap masks and license under `kernel/graphics/assets/` |
 | Builds and tests | `Makefile`, `kernel/host_tests.rs`, `tools/console-check.py`, `tools/bake-fonts.py` |
-| Project documentation | `README.md`, `PROGRESS.md`, `docs/{BOOT,CONSOLE,OPENCODE-V2-RESEARCH,REFERENCES}.md` |
+| Project documentation | `README.md`, `PROGRESS.md`, `docs/{BOOT,CONSOLE,CLI-RESEARCH,OPENCODE-V2-RESEARCH,REFERENCES}.md` |
 
 ## Verification procedure
 

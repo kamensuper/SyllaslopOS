@@ -36,16 +36,14 @@ image, use `make BUILD=build/compact GRUB_DEFAULT=compact run`.
 
 ## Use the console
 
-Type `help` for the command registry or press F1 to open the searchable
-reference. F2 opens system information, F3 opens CPU details and F4 opens
-the memory view. Tab completes commands and supported arguments. Up and Down
-recall previous commands. Use Home, End and Delete to edit, Ctrl+L to clear
-activity, and Esc to close a view. On COM1, Ctrl+] closes a view.
+Use Ctrl+P or F1 to find commands and Ctrl+R to search history.
+Enter stages the selected command in the prompt. Tab completes names
+and arguments. Right accepts a muted suggestion at the end of an input.
+Press Esc to close a view (Ctrl+] over COM1).
 
-Try `bootinfo`, `devices`, `history`, `theme ember`, `theme mono`,
-`zoom 2` and `metrics`. Run `motion off` for instant view changes. See [the console guide](docs/CONSOLE.md) for the
-input model, verification, and limits, and [the boot contract](docs/BOOT.md)
-for memory ownership and firmware requirements.
+Try `calc (0xff & 15) * 4`, `base 4096`, `memmap`, and `sysinfo`.
+`keys` lists shortcuts. See [the console guide](docs/CONSOLE.md) for the
+controls and [CLI research](docs/CLI-RESEARCH.md) for the design choices.
 
 The kernel source is MIT-licensed. The ISO incorporates GRUB under its
 upstream licensing. The bundled bitmap masks are derived from DejaVu.
