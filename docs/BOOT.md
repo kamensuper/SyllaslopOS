@@ -1,60 +1,49 @@
-# Boot protocol
+# Boot contract
 
-## Decision: Multiboot2 via GRUB (BIOS, El Torito ISO)
+## Decision · 2026-11-21
 
-- **Works here today.** Ubuntu 22.04 ships `grub-mkrescue`, `grub-file` and
-  the `grub-pc-bin` modules from apt, which the sandbox can install. Limine
-  is not in Ubuntu 22.04's archive, so we would have to vendor or download
-  binaries. Multiboot2 needs no extra dependency.
-- **Verifiable.** `grub-file --is-x86-multiboot2` checks the header at link
-  time. The Multiboot2 spec defines the boot state exactly: EAX = 0x36d76289,
-  EBX = physical address of the boot information. That gives us a register
-  value to assert on.
-- **Known path.** Slopix boots the same way, so the behaviour on our QEMU
-  setup is known.
-- **Cost.** GRUB enters in 32-bit protected mode with paging off. The kernel
-  must build its own page tables and enter long mode itself; Milestone 2
-  does that in `boot.S`. Limine would hand over in long mode, and we could
-  revisit it if UEFI or SMP bring-up favour it later.
+Use the existing repository's GRUB Multiboot2 path for the first kernel entry.
+A BIOS El Torito ISO and QEMU TCG provide one small, observable boot path.
+GRUB has a host-side header check and the precedent of Slopix. This choice
+keeps responsibility for the long-mode transition in the kernel. The Rust
+kernel uses the freestanding `x86_64-unknown-none` target, with a static
+higher-half code model, aborting panic handler and the SysV calling convention.
 
-Multiboot2 also allows UEFI boot (`grub-efi-amd64-bin`). Only BIOS boot is
-built and tested for now.
+## Entry and mapping
 
-## Image layout (`arch/x86_64/linker.ld`)
+1. SeaBIOS starts GRUB from the ISO. The GRUB menu uses `multiboot2` to load
+   `/boot/kernel.elf`. The header lives at file offset `0x1000` in the linked
+   ELF, within the first 32 KiB required by Multiboot2.
+2. GRUB enters `_start` in 32-bit protected mode at physical `0x100018`.
+   Assembly masks interrupts, clears DF, checks the magic in EAX and saves EBX
+   as the physical boot info address. It checks the CPU's long-mode bit.
+3. Assembly initializes four 4 KiB page-table pages from the ELF's zero-filled
+   boot BSS and loads its own GDT and CR3. It enables PAE, EFER.LME and paging,
+   then far-jumps into 64-bit code through the GDT. The leaf maps physical
+   `0..0x200000` at both `0` and `0xffffffff80000000`. The linker constrains
+   the entire image and stack to this range.
+4. The 64-bit stub sets the data selectors, switches to the 16 KiB kernel
+   stack and calls `kernel_main(u32, u64)` with a 16-byte aligned pre-call
+   stack. Rust checks the original magic, the nonzero/aligned info address
+   and that RSP lies within the kernel stack. It does not read the info
+   structure. The success line is emitted after these checks. COM1 uses
+   115200 baud, 8N1 and bounded transmit polling.
 
-- Physical load base 1 MiB. `.boot` (the Multiboot2 header and the 32-bit
-  entry code) is linked at its physical address because it runs before
-  paging.
-- Everything else is linked in the higher half at
-  `0xFFFFFFFF80000000 + phys` (LMA = VMA - base), which `-mcmodel=kernel`
-  requires.
-- Separate PT_LOAD segments for boot (RWX), text (R-X), rodata (R--) and
-  data/bss (RW-).
-- A link-time assert keeps the image within the first 1 GiB.
-
-## Toolchain
-
-The host `gcc`/`ld` (x86-64 ELF) with freestanding flags: `-ffreestanding
--nostdinc -fno-pic -fno-pie -mcmodel=kernel -mno-red-zone
--mgeneral-regs-only -mno-sse*`, no stack protector, and only the compiler's
-own freestanding headers. The host and target are both x86-64 ELF, and these
-flags remove every hosted assumption, so a separate `x86_64-elf` cross
-compiler is not needed. The link fails if any symbol is left undefined.
-Assembly is GAS `.S` (preprocessed); nasm is not used.
-
-## Boot sequence (current)
-
-1. SeaBIOS loads the El Torito image, and GRUB starts with `timeout=0`.
-2. GRUB loads `/boot/kernel.elf` with `multiboot2` and passes the cmdline
-   from `tools/mkiso.sh`.
-3. `_start` (32-bit) runs `cli; cld; hlt` in a loop. **Milestone 1 stops
-   here.**
+The ELF has separate RX, RW and read-only load segments. Both bootstrap
+virtual aliases use a coarse supervisor-writable, executable 2 MiB leaf.
+The entry path keeps its boot GDT, mappings and stack alive. Interrupts stay
+masked. The milestone includes no IDT, frame allocator, memory-map parser or
+boot memory reclaim. Before reclaim or dropping the low alias, establish and
+verify kernel-owned exception handling and the next mapping layout, then
+account for every live pointer and table.
 
 ## Verification
 
-`make test` runs `tests/qemu_halt_check.py`. It boots the ISO headless
-(`-display none`, TCG, `-no-reboot`) and polls `info registers` over the
-QEMU HMP monitor. It passes only when the CPU reports `HLT=1` with EIP
-inside `_start`'s symbol range and EAX = the Multiboot2 bootloader magic. It
-fails on a timeout or an early QEMU exit. Serial-based assertions replace
-this from Milestone 3, once the kernel has output.
+`make check` runs the GRUB Multiboot2 probe and reports ELF metadata.
+`make test` boots a PC i440FX 7.2 machine on QEMU TCG with a `qemu64` CPU.
+It requires a full COM1 marker line within 20 seconds and rejects an immediate
+reset or exit after the marker. The guest check covers BIOS on this emulator.
+The exact tool and firmware versions are in [progress and verification](../PROGRESS.md).
+
+- [GNU Multiboot2 specification](https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html)
+- [Rust x86_64-unknown-none target](https://doc.rust-lang.org/rustc/platform-support/x86_64-unknown-none.html)

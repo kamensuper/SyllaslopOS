@@ -1,33 +1,21 @@
 # Progress
 
-**Last verified milestone:** M1, repository and build foundation, with a
-bootable image (2026-11-21).
+## M0–M1 · first successor kernel entry
 
-**Current phase:** First development phase. M1 is done. M2 is next.
+The GitHub baseline was `kamensuper/SyllaslopOS` `main` at
+`6a07d543bcd9ade20a7bba5dcca0bac8ac3c`. That tree contained the GRUB template
+and documents describing earlier boot work. The source, build recipe, ISO
+and monitor test described there were absent from the committed tree. The
+separately supplied SyllaslopOS Bible is a design and history reference.
 
-## Working features
-- Reproducible build: `make` produces `build/kernel.elf` (Multiboot2,
-  checked with `grub-file`) and `build/syllaslopos.iso` (GRUB, BIOS).
-- The image boots in QEMU (TCG, `-machine pc`). GRUB hands off to `_start`,
-  which halts with EAX = 0x36d76289 (the Multiboot2 magic).
-- `make test` checks this automatically, through register state over the
-  QEMU monitor.
+The workspace builds a freestanding Rust ELF and a GRUB BIOS ISO from source.
+The first guest milestone is a serial line from 64-bit Rust after the
+Multiboot2 argument and kernel stack checks. See [the boot contract](docs/BOOT.md)
+for ownership and the mapping scope.
 
-## Known limitations
-- No C kernel yet, and no output of any kind (no serial, no VGA text).
-- `_start` is a 32-bit `cli; hlt` stub. Long mode is not entered yet.
-- BIOS boot only. UEFI has not been tested.
-- The tests use TCG only. Real hardware has not been tested.
+## Next milestone · exceptions and memory
 
-## Test commands
-    bash tools/setup-toolchain.sh   # once per sandbox rebuild
-    make test                  # boots ISO headless; PASS line + exit 0
-
-Last known-good boot output:
-`PASS: CPU halted at IP=0x10001b inside _start [0x100018,0x10001d), EAX=0x36d76289`
-
-## Next dependency-ready task
-M2, kernel entry: build the boot page tables (identity map plus higher
-half), enter long mode, set up the stack, clear .bss, call `kmain(magic,
-mbi)` in C, validate the Multiboot2 magic and the info structure (size,
-alignment, tag walk), then halt in a controlled way.
+Install a kernel IDT with a controlled fault test, then validate the
+Multiboot2 info structure in an explicitly mapped range before parsing its
+memory information. Establish the new page protections and track live boot
+state before handing any eligible frames to an allocator.

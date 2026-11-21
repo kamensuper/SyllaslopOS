@@ -33,3 +33,11 @@ repository must be compatible with that license.
    attribution. GPL/LGPL is not, unless the user decides to change the
    project license.
 3. Record any adapted code here and in its commit message.
+
+## GRUB build dependency
+
+The ISO contains distribution GRUB BIOS binaries. They are used as external
+bootloader components under GPL-3.0-or-later and are not part of the MIT kernel.
+For the Debian GRUB build used in the verification record, the matching source
+manifest and source archives are available from Debian's
+[GRUB source directory](https://deb.debian.org/debian/pool/main/g/grub2/).
