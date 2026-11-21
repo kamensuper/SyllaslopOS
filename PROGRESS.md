@@ -3,7 +3,7 @@
 ## M0–M1 · first successor kernel entry
 
 The GitHub baseline was `kamensuper/SyllaslopOS` `main` at
-`6a07d543bcd9ade20a7bba5dcca0bac8ac3c`. That tree contained the GRUB template
+`6a07d543bcd9ade20a7bba5dcca0bac8ac3c8a3c`. That tree contained the GRUB template
 and documents describing earlier boot work. The source, build recipe, ISO
 and monitor test described there were absent from the committed tree. The
 separately supplied SyllaslopOS Bible is a design and history reference.
@@ -59,3 +59,59 @@ A negative guest run changed QEMU's `-cpu qemu64` to `-cpu qemu32` in the
 command printed by `make test`. It produced no serial marker and the checker
 returned 1 after 20 seconds. These runs cover the BIOS emulator path. Fedora
 host, UEFI firmware and physical hardware checks are pending.
+
+## SLC · native console verification · 2026-11-21
+
+The graphical console was built from local source commit
+`71be8b0346250262082a1447658a8e66e47a935d` and tree
+`e495ebf8a309c7e173ec756bee1a570fce7c8eef`, based on `ac0d8ee`.
+The original boot artifacts and entry marker were reproduced before editing.
+The build used the same compiler, GRUB, QEMU and SeaBIOS versions above.
+
+| Check | Result |
+| --- | --- |
+| `make test` | Multiboot2 ELF accepted, original entry marker observed |
+| `make test-host` | 12 passed, including malformed boot tags, framebuffer bounds, key decoding, layout, history and command parsing |
+| `make test-console` | Real PS/2 editing and commands at 1024×768 and 800×600, plus COM1 commands in text-mode recovery |
+| Default ISO with `-vga none` | COM1 fallback accepted commands without forcing the recovery boot option |
+| Independent clean build | `cmp` matched the kernel ELF and default ISO byte for byte |
+
+The guest exercised completion into `sysinfo`, searchable `help`, typed
+`echo`, history recall and editing, theme and zoom changes, and `clear`.
+The verifier captured PPM scanout with QMP `screendump`, paired with guest
+COM1 output. The screenshot files retain those pixels as PNG.
+
+To repeat, use the [console verification commands](docs/CONSOLE.md). The
+extracted emulator additionally needed
+`QEMU="qemu-system-x86_64 -L /path/to/qemu-firmware"` and
+`QEMU_BIOS=/path/to/bios-256k.bin`. The automatic no-VGA test used:
+
+```sh
+python3 tools/console-check.py --output build/screens-no-vga \
+  --iso build/syllaslopos.iso --qemu qemu-system-x86_64 -vga none
+```
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `build/kernel.elf` | 166,088 | `ee4d00f54d7758080cf577682c4f7408d8c3dd7fb847ba137f4c7e0f774bf38f` |
+| `build/syllaslopos.iso` | 2,877,440 | `54d666d159fcb8ace6c39b665064a513dc0f95ab389aef9fb08d4599a644e725` |
+| `build/compact/syllaslopos.iso` | 2,877,440 | `fdf72129ed02dc58eebdf1d903029d2a1af3b86a0a11cc509e1efb28b23b64d7` |
+| `build/recovery/syllaslopos.iso` | 2,877,440 | `06ab2db5be711abe8bfca12c7b1e69638b8554c207d0e02504ad7461d6df45eb` |
+
+ELF entry `0x100030`, five load segments (RX, RW, RX, R, RW), no relocation
+records and no undefined symbols. `size` reported 142,842 bytes of text and
+read-only data, 648 bytes of initialized data and 90,112 bytes of BSS,
+including a 64 KiB boot stack. Total linked section sizes were 233,602 bytes.
+The firmware framebuffer is a device aperture outside this total.
+
+The guest's `metrics` counted 7,270,564 bytes written for the first 1024×768
+frame and 340,536 for the last prompt redraw before the metrics command
+(about 4.7% of the first frame's writes). The compact equivalents were
+4,330,304 and 263,480 bytes. These are actual volatile write volumes,
+including overdraw. They are not host CPU timing or display latency.
+
+Known constraints remain in the [console guide](docs/CONSOLE.md). Input polling
+keeps the boot CPU awake. Power command confirmation is implemented; these
+guest checks did not exercise reset or halt. The next milestone is an IDT
+and fault diagnostics, followed by input IRQs, reliable timing, and protected
+memory ownership.
