@@ -3,7 +3,8 @@
 SyllaslopOS uses GRUB Multiboot2 with a BIOS El Torito ISO. The entry stub
 initializes x86-64 long mode and calls Rust using SysV. The Rust target stays
 `x86_64-unknown-none` with a static higher-half code model and an aborting
-panic handler. QEMU TCG and SeaBIOS are the exercised firmware path.
+panic handler that reports on COM1. QEMU TCG and SeaBIOS are the exercised
+firmware path.
 
 ## Entry and boot memory
 
@@ -24,9 +25,24 @@ panic handler. QEMU TCG and SeaBIOS are the exercised firmware path.
    Missing or malformed optional information leaves COM1 available.
 
 The boot aliases remain writable and executable. The kernel keeps all
-boot tables and loader bytes reserved. Interrupts remain masked. Before
-publishing general RAM, add a kernel IDT, guarded stacks, per-section
+boot tables and loader bytes reserved. Maskable interrupts remain off.
+Before publishing general RAM, add guarded stacks, per-section
 protections, and a record of the live boot mappings and references.
+
+## Faults and diagnostics
+
+`kernel/traps.rs` loads an IDT with gates for vectors 0 to 31 as soon as
+COM1 is ready. No exception is recoverable yet: each one writes its vector,
+error code, RIP, RSP, RFLAGS, and CR2 for a page fault to COM1, then halts.
+A Rust panic writes its source location and message the same way. Both end
+with `SYLLASLOPOS: halted`.
+
+The gates use the interrupted stack because there is no TSS. A kernel stack
+overflow therefore still ends in a triple fault; reporting it needs a TSS
+with an IST stack for the double-fault gate.
+
+A rejected Multiboot2 blob, framebuffer, or keyboard controller is logged
+on COM1 with the check that refused it before the console starts.
 
 ## Framebuffer aperture
 

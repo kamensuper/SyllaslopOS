@@ -15,10 +15,10 @@ for ownership and the mapping scope.
 
 ## Next milestone · exceptions and memory
 
-Install a kernel IDT with a controlled fault test, then validate the
-Multiboot2 info structure in an explicitly mapped range before parsing its
-memory information. Establish the new page protections and track live boot
-state before handing any eligible frames to an allocator.
+The kernel IDT and a controlled fault test are in place (see the last
+section). Next, add a TSS with an IST stack for the double-fault gate,
+establish the new page protections and track live boot state before
+handing any eligible frames to an allocator.
 
 ## Verification record · 2026-11-21
 
@@ -178,3 +178,34 @@ and passed the same serial recovery checks.
 | --- | ---: | --- |
 | `build/kernel.elf` | 151,704 | `fc7367cc007514af793aa7257cac980536098a926689414c11ec600adfc0fd0d` |
 | `build/syllaslopos.iso` | 2,863,104 | `7e29d75ac3bf67ce4845f0f583867abb54b84a465251fc5199bc720dfea48597` |
+
+## SLC 0.3 · diagnostics and line editing
+
+Verified defects fixed:
+
+- The COM1 decoder ended a CSI sequence at the first non-digit, so a
+  modified arrow (`ESC [ 1 ; 5 C`) typed `5C` into the prompt. It now
+  consumes each sequence through its final byte.
+- Tab completion compared names byte for byte while lookup and suggestions
+  ignore case, so `SYS` showed a suggestion that Tab refused.
+- The log echo of a 96-byte command lost its last two bytes.
+- No IDT was loaded, so any exception or NMI reset the machine silently;
+  the panic handler and boot fallbacks printed nothing.
+- The QEMU checks required `pc-i440fx-7.2` and the QMP `format` argument,
+  and lost early COM1 output through the PTY. They now run on QEMU 6.2.
+
+Added: exception and panic reports on COM1, logged boot refusals, and
+readline word motion and erasure on PS/2 and COM1.
+
+`make -j2 test test-console` passed on Ubuntu 22.04 with rustc 1.85.1,
+QEMU 6.2.0 (`-machine pc`), GRUB 2.06 and xorriso 1.5.4: 22 host tests,
+PS/2 input at 1024×768 and 800×600, and COM1 recovery. The recovery run
+injects an NMI and requires the exception report. A page fault forced
+through GDB and a deliberate out-of-bounds panic were each observed once
+by hand; neither is part of the automated checks. No hardware or UEFI
+run was made.
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `build/kernel.elf` | 156,976 | `c59a0defc9dabe2427823764d31e12594f82d9716565aea0fe96c9c54b1901e2` |
+| `build/syllaslopos.iso` | 5,224,448 | `c0d82442f0008e4e16257a1de25ce2c5fb2aa15e53870ba6f44a096aaf81adc6` |

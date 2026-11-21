@@ -20,6 +20,10 @@ pub enum Key {
     Palette,
     SearchHistory,
     Erase,
+    EraseWord,
+    EraseToEnd,
+    WordLeft,
+    WordRight,
     Function(u8),
 }
 
@@ -149,12 +153,15 @@ impl Set1 {
             _ => {}
         }
 
+        let control = self.controls != 0;
         if extended {
             return Some(match code {
                 0x1c => Key::Enter,
                 0x47 => Key::Home,
                 0x48 => Key::Up,
                 0x49 => Key::PageUp,
+                0x4b if control => Key::WordLeft,
+                0x4d if control => Key::WordRight,
                 0x4b => Key::Left,
                 0x4d => Key::Right,
                 0x4f => Key::End,
@@ -177,6 +184,7 @@ impl Set1 {
         };
         let ascii = match code {
             0x01 => return Some(Key::Escape),
+            0x0e if control => return Some(Key::EraseWord),
             0x0e => return Some(Key::Backspace),
             0x0f => return Some(Key::Tab),
             0x1c => return Some(Key::Enter),
@@ -195,8 +203,12 @@ impl Set1 {
             0x39 => b' ',
             _ => return None,
         };
-        if self.controls != 0 {
+        if control {
             return match ascii.to_ascii_lowercase() {
+                b'a' => Some(Key::Home),
+                b'e' => Some(Key::End),
+                b'w' => Some(Key::EraseWord),
+                b'k' => Some(Key::EraseToEnd),
                 b'l' => Some(Key::Clear),
                 b'p' => Some(Key::Palette),
                 b'r' => Some(Key::SearchHistory),
@@ -216,65 +228,105 @@ fn set_modifier(bits: &mut u8, mask: u8, release: bool) {
     }
 }
 
+/// Decodes COM1 bytes from a VT-style terminal. Escape, CSI and SS3
+/// sequences are consumed through their final byte, including the ones
+/// this console assigns no meaning.
 #[derive(Default)]
 pub struct SerialKeys {
-    state: u8,
-    parameter: u8,
+    state: Sequence,
+    parameters: [u8; 2],
+    field: usize,
     cr: bool,
+}
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum Sequence {
+    #[default]
+    Ground,
+    Escape,
+    Control,
 }
 
 impl SerialKeys {
     pub fn feed(&mut self, byte: u8) -> Option<Key> {
         let after_cr = core::mem::replace(&mut self.cr, byte == b'\r');
         if byte == 0x1b {
-            self.state = 1;
-            self.parameter = 0;
+            self.state = Sequence::Escape;
+            self.parameters = [0; 2];
+            self.field = 0;
             return None;
         }
-        match self.state {
-            1 if matches!(byte, b'[' | b'O') => {
-                self.state = 2;
-                return None;
-            }
-            2 if byte.is_ascii_digit() => {
-                self.parameter = self
-                    .parameter
-                    .saturating_mul(10)
-                    .saturating_add(byte - b'0');
-                return None;
-            }
-            2 => {
-                self.state = 0;
-                return match (byte, self.parameter) {
-                    (b'A', 0) => Some(Key::Up),
-                    (b'B', 0) => Some(Key::Down),
-                    (b'C', 0) => Some(Key::Right),
-                    (b'D', 0) => Some(Key::Left),
-                    (b'H', 0) | (b'~', 1 | 7) => Some(Key::Home),
-                    (b'F', 0) | (b'~', 4 | 8) => Some(Key::End),
-                    (b'~', 3) => Some(Key::Delete),
-                    (b'~', 5) => Some(Key::PageUp),
-                    (b'~', 6) => Some(Key::PageDown),
-                    (b'P'..=b'S', 0) => Some(Key::Function(byte - b'P' + 1)),
-                    (b'~', 11..=14) => Some(Key::Function(self.parameter - 10)),
-                    _ => None,
-                };
-            }
-            _ => self.state = 0,
+        match core::mem::take(&mut self.state) {
+            Sequence::Escape => match byte {
+                b'[' | b'O' => {
+                    self.state = Sequence::Control;
+                    return None;
+                }
+                b'b' => return Some(Key::WordLeft),
+                b'f' => return Some(Key::WordRight),
+                0x7f => return Some(Key::EraseWord),
+                _ => {}
+            },
+            Sequence::Control => match byte {
+                // Parameter and intermediate bytes extend the sequence.
+                0x20..=0x3f => {
+                    self.state = Sequence::Control;
+                    if byte == b';' {
+                        self.field += 1;
+                    } else if let Some(value) = self.parameters.get_mut(self.field) {
+                        *value = if byte.is_ascii_digit() {
+                            value.saturating_mul(10).saturating_add(byte - b'0')
+                        } else {
+                            u8::MAX
+                        };
+                    }
+                    return None;
+                }
+                0x40..=0x7e => return self.control(byte),
+                // Any other byte abandons the sequence and is read normally.
+                _ => {}
+            },
+            Sequence::Ground => {}
         }
         match byte {
             b'\r' => Some(Key::Enter),
             b'\n' if !after_cr => Some(Key::Enter),
             0x08 | 0x7f => Some(Key::Backspace),
             b'\t' => Some(Key::Tab),
+            0x01 => Some(Key::Home),
+            0x05 => Some(Key::End),
+            0x0b => Some(Key::EraseToEnd),
             0x0c => Some(Key::Clear),
             0x10 => Some(Key::Palette),
             0x12 => Some(Key::SearchHistory),
+            0x17 => Some(Key::EraseWord),
             0x03 | 0x15 => Some(Key::Erase),
             0x1d => Some(Key::Escape),
             b' '..=b'~' => Some(Key::Char(byte)),
             _ => None,
         }
+    }
+
+    fn control(&self, last: u8) -> Option<Key> {
+        let [first, modifier] = self.parameters;
+        // xterm reports Alt as modifier 3 and Ctrl as modifier 5.
+        let word = matches!(modifier, 3 | 5);
+        Some(match (last, first) {
+            (b'A', 0 | 1) => Key::Up,
+            (b'B', 0 | 1) => Key::Down,
+            (b'C', 0 | 1) if word => Key::WordRight,
+            (b'D', 0 | 1) if word => Key::WordLeft,
+            (b'C', 0 | 1) => Key::Right,
+            (b'D', 0 | 1) => Key::Left,
+            (b'H', 0 | 1) | (b'~', 1 | 7) => Key::Home,
+            (b'F', 0 | 1) | (b'~', 4 | 8) => Key::End,
+            (b'~', 3) => Key::Delete,
+            (b'~', 5) => Key::PageUp,
+            (b'~', 6) => Key::PageDown,
+            (b'P'..=b'S', 0 | 1) => Key::Function(last - b'P' + 1),
+            (b'~', 11..=14) => Key::Function(first - 10),
+            _ => return None,
+        })
     }
 }
 
@@ -311,5 +363,52 @@ mod tests {
         assert_eq!(keys.feed(b'\r'), Some(Key::Enter));
         assert_eq!(keys.feed(b'\n'), None);
         assert_eq!(keys.feed(0x1d), Some(Key::Escape));
+    }
+
+    #[test]
+    fn serial_consumes_whole_control_sequences() {
+        let mut keys = SerialKeys::default();
+        let mut feed =
+            |bytes: &[u8]| -> Vec<Key> { bytes.iter().filter_map(|&b| keys.feed(b)).collect() };
+        // Modified and unknown sequences never leak parameter bytes as text.
+        assert_eq!(feed(b"\x1b[1;5C"), [Key::WordRight]);
+        assert_eq!(feed(b"\x1b[1;5D"), [Key::WordLeft]);
+        assert_eq!(feed(b"\x1b[1;2A"), [Key::Up]);
+        assert_eq!(feed(b"\x1b[3;5~"), [Key::Delete]);
+        assert_eq!(feed(b"\x1b[200~"), []);
+        assert_eq!(feed(b"\x1b[?25h"), []);
+        assert_eq!(feed(b"\x1b[15;2~x"), [Key::Char(b'x')]);
+        // A control byte abandons the sequence and keeps its own meaning.
+        assert_eq!(feed(b"\x1b[1;\rx"), [Key::Enter, Key::Char(b'x')]);
+        assert_eq!(
+            feed(b"\x1bb\x1bf\x1b\x7f"),
+            [Key::WordLeft, Key::WordRight, Key::EraseWord]
+        );
+        assert_eq!(
+            feed(b"\x01\x05\x17\x0b"),
+            [Key::Home, Key::End, Key::EraseWord, Key::EraseToEnd]
+        );
+    }
+
+    #[test]
+    fn control_chords_edit_the_line() {
+        let mut keys = Set1::default();
+        assert_eq!(keys.feed(0x1d), None);
+        for (code, key) in [
+            (0x1e, Key::Home),
+            (0x12, Key::End),
+            (0x11, Key::EraseWord),
+            (0x25, Key::EraseToEnd),
+            (0x0e, Key::EraseWord),
+        ] {
+            assert_eq!(keys.feed(code), Some(key));
+        }
+        for (code, key) in [(0x4b, Key::WordLeft), (0x4d, Key::WordRight)] {
+            assert_eq!(keys.feed(0xe0), None);
+            assert_eq!(keys.feed(code), Some(key));
+        }
+        assert_eq!(keys.feed(0x9d), None);
+        assert_eq!(keys.feed(0xe0), None);
+        assert_eq!(keys.feed(0x4b), Some(Key::Left));
     }
 }

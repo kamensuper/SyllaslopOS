@@ -12,12 +12,15 @@ KERNEL_INPUTS := $(wildcard kernel/*.rs kernel/console/*.rs kernel/graphics/*.rs
 QEMU ?= qemu-system-x86_64
 QEMU_BIOS ?=
 QEMU_MEMORY ?= 128M
+# The verification record uses pc-i440fx-7.2. QEMU releases that lack that
+# machine type fall back to their default i440FX "pc" machine.
+QEMU_MACHINE ?= $(shell $(QEMU) -machine help 2>/dev/null | grep -q '^pc-i440fx-7\.2 ' && echo pc-i440fx-7.2 || echo pc)
 PYTHON ?= python3
 
 ISO := $(BUILD)/syllaslopos.iso
 KERNEL := $(BUILD)/kernel.elf
 IMAGE_DATE := 2025010100000000
-QEMU_FLAGS := -machine pc-i440fx-7.2 -accel tcg -cpu qemu64 -m $(QEMU_MEMORY) \
+QEMU_FLAGS = -machine $(QEMU_MACHINE) -accel tcg -cpu qemu64 -m $(QEMU_MEMORY) \
 	$(if $(QEMU_BIOS),-bios "$(QEMU_BIOS)") -boot d -cdrom "$(ISO)" -nic none \
 	-no-reboot
 QEMU_HEADLESS := -display none -monitor none -serial stdio
@@ -70,11 +73,11 @@ test-host: $(BUILD)/host-tests
 test-console: $(ISO) test-host
 	$(MAKE) BUILD="$(BUILD)/compact" GRUB_DEFAULT=compact all
 	$(MAKE) BUILD="$(BUILD)/recovery" GRUB_DEFAULT=serial all
-	$(PYTHON) tools/console-check.py --output "$(BUILD)/screens" --iso "$(ISO)" \
+	$(PYTHON) tools/console-check.py --output "$(BUILD)/screens" --iso "$(ISO)" --machine $(QEMU_MACHINE) \
 		--resolution 1024x768x32 --qemu $(QEMU) $(if $(QEMU_BIOS),-bios "$(QEMU_BIOS)")
-	$(PYTHON) tools/console-check.py --output "$(BUILD)/screens-compact" --iso "$(BUILD)/compact/syllaslopos.iso" \
+	$(PYTHON) tools/console-check.py --output "$(BUILD)/screens-compact" --iso "$(BUILD)/compact/syllaslopos.iso" --machine $(QEMU_MACHINE) \
 		--resolution 800x600x32 --qemu $(QEMU) $(if $(QEMU_BIOS),-bios "$(QEMU_BIOS)")
-	$(PYTHON) tools/console-check.py --output "$(BUILD)/screens-recovery" --iso "$(BUILD)/recovery/syllaslopos.iso" \
+	$(PYTHON) tools/console-check.py --output "$(BUILD)/screens-recovery" --iso "$(BUILD)/recovery/syllaslopos.iso" --machine $(QEMU_MACHINE) \
 		--qemu $(QEMU) $(if $(QEMU_BIOS),-bios "$(QEMU_BIOS)")
 
 run: $(ISO)

@@ -254,7 +254,7 @@ fn output(
     let row_height = 23 * scale;
     let capacity = (area.h / row_height).max(1) as usize;
     let cols = (area.w / (BODY.w * scale)).max(1) as usize;
-    // A 96-byte logical line spans at most four rows at the narrowest
+    // A 98-byte logical line spans at most four rows at the narrowest
     // supported display and 2x text. The state keeps at most 48 lines.
     let mut rows = [(0u8, 0u8); 192];
     let mut count = 0;

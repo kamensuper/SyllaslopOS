@@ -4,6 +4,8 @@ use super::commands::{self, Services};
 use crate::input::Key;
 
 const INPUT: usize = 96;
+/// A log line holds a full prompt behind its two-byte "> " echo marker.
+const LINE: usize = INPUT + 2;
 const LOG: usize = 48;
 const HISTORY: usize = 16;
 
@@ -18,14 +20,14 @@ pub enum Tone {
 
 #[derive(Clone, Copy)]
 pub struct Line {
-    buf: [u8; INPUT],
+    buf: [u8; LINE],
     len: usize,
     pub tone: Tone,
 }
 
 impl Line {
     pub const EMPTY: Self = Self {
-        buf: [0; INPUT],
+        buf: [0; LINE],
         len: 0,
         tone: Tone::Text,
     };
@@ -50,7 +52,7 @@ impl Line {
 
 impl Write for Line {
     fn write_str(&mut self, text: &str) -> fmt::Result {
-        for byte in text.bytes().take(INPUT - self.len) {
+        for byte in text.bytes().take(LINE - self.len) {
             self.buf[self.len] = if byte.is_ascii_graphic() || byte == b' ' {
                 byte
             } else {
@@ -149,9 +151,44 @@ impl Edit {
             Key::Home => self.cursor = 0,
             Key::End => self.cursor = self.len,
             Key::Erase => *self = Self::EMPTY,
+            Key::WordLeft => self.cursor = self.word_start(),
+            Key::WordRight => self.cursor = self.word_end(),
+            Key::EraseWord => {
+                let start = self.word_start();
+                self.bytes.copy_within(self.cursor..self.len, start);
+                self.len -= self.cursor - start;
+                self.cursor = start;
+            }
+            Key::EraseToEnd => self.len = self.cursor,
             _ => return false,
         }
         true
+    }
+
+    /// The start of the word at or before the cursor, as readline defines it.
+    fn word_start(&self) -> usize {
+        let head = &self.bytes[..self.cursor];
+        let word = head
+            .iter()
+            .rposition(|&byte| byte != b' ')
+            .map_or(0, |i| i + 1);
+        head[..word]
+            .iter()
+            .rposition(|&byte| byte == b' ')
+            .map_or(0, |i| i + 1)
+    }
+
+    fn word_end(&self) -> usize {
+        let tail = &self.bytes[self.cursor..self.len];
+        let gap = tail
+            .iter()
+            .position(|&byte| byte != b' ')
+            .unwrap_or(tail.len());
+        let word = tail[gap..]
+            .iter()
+            .position(|&byte| byte == b' ')
+            .unwrap_or(tail.len() - gap);
+        self.cursor + gap + word
     }
 
     fn delete(&mut self) {
@@ -652,6 +689,31 @@ mod tests {
     }
 
     #[test]
+    fn word_motion_and_erasure_follow_readline() {
+        let mut edit = Edit::EMPTY;
+        edit.replace(b"echo  alpha beta ");
+        for (key, text, cursor) in [
+            (Key::WordLeft, "echo  alpha beta ", 12),
+            (Key::WordLeft, "echo  alpha beta ", 6),
+            (Key::EraseWord, "alpha beta ", 0),
+            (Key::WordLeft, "alpha beta ", 0),
+            (Key::WordRight, "alpha beta ", 5),
+            (Key::WordRight, "alpha beta ", 10),
+            (Key::EraseWord, "alpha  ", 6),
+            (Key::WordRight, "alpha  ", 7),
+            (Key::WordRight, "alpha  ", 7),
+            (Key::Home, "alpha  ", 0),
+            (Key::Right, "alpha  ", 1),
+            (Key::EraseToEnd, "a", 1),
+            (Key::EraseWord, "", 0),
+            (Key::EraseWord, "", 0),
+        ] {
+            assert!(edit.apply(key));
+            assert_eq!((edit.text(), edit.cursor), (text, cursor), "{key:?}");
+        }
+    }
+
+    #[test]
     fn history_preserves_the_draft() {
         let mut model = Console::new();
         let system = Services::default();
@@ -676,6 +738,32 @@ mod tests {
         model.prompt.replace(b"theme e");
         model.event(Key::Tab, &system);
         assert_eq!(model.prompt.bytes(), b"theme ember");
+    }
+
+    #[test]
+    fn completion_ignores_case_like_command_lookup() {
+        let system = Services::default();
+        let mut model = Console::new();
+        model.prompt.replace(b"SYS");
+        model.event(Key::Tab, &system);
+        assert_eq!(model.prompt.bytes(), b"sysinfo ");
+        model.prompt.replace(b"Theme E");
+        model.event(Key::Tab, &system);
+        assert_eq!(model.prompt.bytes(), b"Theme ember");
+        assert_eq!(model.event(Key::Enter, &system), Change::Full);
+        assert_eq!(model.theme, Theme::Ember);
+    }
+
+    #[test]
+    fn a_full_prompt_is_echoed_without_truncation() {
+        let system = Services::default();
+        let mut model = Console::new();
+        let mut input = [b'x'; INPUT];
+        input[..5].copy_from_slice(b"echo ");
+        model.prompt.replace(&input);
+        model.event(Key::Enter, &system);
+        assert_eq!(&model.row(0).unwrap().bytes()[2..], input);
+        assert_eq!(model.row(1).unwrap().bytes(), &input[5..]);
     }
 
     #[test]
