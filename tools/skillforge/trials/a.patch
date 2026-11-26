@@ -1,0 +1,22 @@
+diff --git a/boot-check.py b/boot-check.py
+index c8c38f8..5a31591 100644
+--- a/boot-check.py
++++ b/boot-check.py
+@@ -32 +32 @@ def boot(command: list[str], log_path: Path) -> bool:
+-                    return guest.wait() == 0
++                    return False
+diff --git a/numbers.rs b/numbers.rs
+index 4188cd8..e41e0a4 100644
+--- a/numbers.rs
++++ b/numbers.rs
+@@ -55 +55 @@ impl Parser<'_> {
+-            let right = self.expr(priority, depth + 1)?;
++            let right = self.expr(priority + 1, depth + 1)?;
+@@ -117,0 +118,7 @@ mod tests {
++
++    #[test]
++    fn equal_precedence_uses_left_to_right_order() {
++        assert_eq!(evaluate("64 / 4 / 2"), Ok(8));
++        assert_eq!(evaluate("20 % 6 * 2"), Ok(4));
++        assert_eq!(evaluate("9223372036854775807 + 1 - 1"), Err("integer overflow"));
++    }
