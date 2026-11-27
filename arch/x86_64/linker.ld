@@ -36,7 +36,11 @@ SECTIONS
     } :data
     .bss ALIGN(PAGE_SIZE) (NOLOAD) : AT(ADDR(.bss) - KERNEL_BASE) {
         *(.bss .bss.* COMMON)
-        . = ALIGN(16);
+        /* paging.rs unmaps this page, so a stack overflow faults instead of
+           silently overwriting the data below the stack. */
+        . = ALIGN(PAGE_SIZE);
+        __stack_guard = .;
+        . += PAGE_SIZE;
         __stack_bottom = .;
         . += 0x10000;
         __stack_top = .;
@@ -45,4 +49,5 @@ SECTIONS
     /DISCARD/ : { *(.eh_frame .eh_frame.* .note.GNU-stack .comment) }
 }
 
-ASSERT((__stack_top - KERNEL_BASE) <= 0x200000, "kernel exceeds the bootstrap mapping")
+ASSERT((__stack_top - KERNEL_BASE) <= 0x200000,
+       "the kernel must end inside the first 2 MiB, which paging.rs splits into 4 KiB pages")

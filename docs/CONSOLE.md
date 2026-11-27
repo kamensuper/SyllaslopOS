@@ -21,10 +21,11 @@ and Ctrl+] for returning from a view.
 | `metrics` | Report actual framebuffer bytes written |
 | `version`, `about`, `uptime` | Read version, current scope or clock availability |
 | `halt confirm`, `reboot confirm` | Halt the boot CPU or request an i8042 reset |
+| `fault <kind>` | `int3` returns through the IDT. `ud`, `de`, `gp`, `null` and `stack` raise a fatal exception and show the crash report |
 
 Command names are case-insensitive. Input is capped at 96 printable ASCII
 bytes. The command history retains 16 lines. Views and transcript each
-retain at most 48 lines. These buffers and the font masks need no heap.
+retain at most 48 lines. These buffers and the glyph cache need no heap.
 Files and process commands explain the missing filesystem and scheduler.
 Memory values are the firmware map's usable regions, before kernel
 reservations. The device view records configured boot interfaces.
@@ -33,7 +34,10 @@ reservations. The device view records configured boot interfaces.
 
 The console shell model consumes device-independent key events. Command
 handlers receive a typed system snapshot and update bounded output. The
-renderer draws from that model, with clipped glyph masks and rectangles.
+renderer draws from that model, with clipped glyphs and rectangles. Glyphs
+are rasterized from DejaVu Sans Mono outlines at the exact pixel size of
+each scale, with anti-aliased coverage, and cached after first use. Zoom 2
+is a separate 30 px rendering, not an enlarged 15 px bitmap.
 The CPU and memory views share one focus policy. In history, Enter recalls
 a command for editing. In help, typing filters immediately and PgUp/PgDn
 moves through matches. Esc returns to the command prompt.
@@ -69,8 +73,9 @@ See [CLI references and choices](CLI-RESEARCH.md) and the
 | --- | --- |
 | Boot and handoff | `arch/x86_64/boot.S`, `arch/x86_64/linker.ld`, `boot/grub/grub.cfg`, `kernel/main.rs`, `kernel/bootinfo.rs` |
 | Input and services | `kernel/input.rs`, `kernel/io.rs`, `kernel/serial.rs`, `kernel/console/commands.rs` |
-| Console model and renderer | `kernel/console/{mod,state,screen,numbers}.rs`, `kernel/graphics/{mod,framebuffer}.rs`, bitmap masks and license under `kernel/graphics/assets/` |
-| Builds and tests | `Makefile`, `kernel/host_tests.rs`, `tools/console-check.py`, `tools/bake-fonts.py` |
+| Console model and renderer | `kernel/console/{mod,state,screen,numbers}.rs`, `kernel/graphics/{mod,framebuffer,outline}.rs`, outline asset and license under `kernel/graphics/assets/` |
+| Exceptions and crash reports | `kernel/interrupts.rs`, `kernel/crash.rs`, `kernel/paging.rs` |
+| Builds and tests | `Makefile`, `.github/workflows/ci.yml`, `kernel/host_tests.rs`, `tools/boot-check.py`, `tools/console-check.py`, `tools/bake-outlines.py` |
 | Project documentation | `README.md`, `PROGRESS.md`, `docs/{BOOT,CONSOLE,CLI-RESEARCH,OPENCODE-V2-RESEARCH,REFERENCES}.md` |
 
 ## Verification procedure
@@ -79,6 +84,7 @@ See [CLI references and choices](CLI-RESEARCH.md) and the
 make -j4
 make test
 make test-console
+make test-faults
 qemu-system-x86_64 -machine pc-i440fx-7.2 -accel tcg -cpu qemu64 -m 128M \
   -boot d -cdrom build/syllaslopos.iso -nic none -no-reboot \
   -display gtk -monitor none -serial stdio
@@ -91,7 +97,8 @@ See [the verification record](../PROGRESS.md) for measured results.
 
 ## Remaining work
 
-Input uses polled i8042 and COM1 because there is no IDT or IRQ dispatcher.
+Input uses polled i8042 and COM1. The IDT handles CPU exceptions, but there
+is no PIC/APIC setup or IRQ dispatcher yet.
 It can keep a virtual CPU busy while idle. The console has a fixed firmware
 display mode, a US keyboard map, ASCII glyphs and boot-local history.
 There is no USB HID, hardware device enumeration, filesystem, process

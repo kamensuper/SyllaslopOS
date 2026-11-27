@@ -8,11 +8,12 @@ GRUB_MKRESCUE ?= grub-mkrescue
 GRUB_PLATFORM ?= /usr/lib/grub/i386-pc
 GRUB_DEFAULT ?= console
 QEMU_DISPLAY ?= gtk
-KERNEL_INPUTS := $(wildcard kernel/*.rs kernel/console/*.rs kernel/graphics/*.rs kernel/graphics/assets/*.mask)
+KERNEL_INPUTS := $(wildcard kernel/*.rs kernel/console/*.rs kernel/graphics/*.rs kernel/graphics/assets/*.outline)
 QEMU ?= qemu-system-x86_64
 QEMU_BIOS ?=
 QEMU_MEMORY ?= 128M
 PYTHON ?= python3
+FAULTS := null ud de gp stack
 
 ISO := $(BUILD)/syllaslopos.iso
 KERNEL := $(BUILD)/kernel.elf
@@ -22,7 +23,7 @@ QEMU_FLAGS := -machine pc-i440fx-7.2 -accel tcg -cpu qemu64 -m $(QEMU_MEMORY) \
 	-no-reboot
 QEMU_HEADLESS := -display none -monitor none -serial stdio
 
-.PHONY: all check test test-host test-console run run-serial debug clean
+.PHONY: all check test test-host test-console test-faults run run-serial debug clean
 all: $(ISO)
 
 $(BUILD):
@@ -76,6 +77,18 @@ test-console: $(ISO) test-host
 		--resolution 800x600x32 --qemu $(QEMU) $(if $(QEMU_BIOS),-bios "$(QEMU_BIOS)")
 	$(PYTHON) tools/console-check.py --output "$(BUILD)/screens-recovery" --iso "$(BUILD)/recovery/syllaslopos.iso" \
 		--qemu $(QEMU) $(if $(QEMU_BIOS),-bios "$(QEMU_BIOS)")
+
+# Each fatal fault halts the guest, so every kind gets its own boot. The
+# recovery ISO checks the COM1 report; the default ISO checks the crash screen.
+test-faults: $(ISO)
+	$(MAKE) BUILD="$(BUILD)/recovery" GRUB_DEFAULT=serial all
+	@set -e; for kind in $(FAULTS); do \
+		$(PYTHON) tools/console-check.py --output "$(BUILD)/faults/$$kind" \
+			--iso "$(BUILD)/recovery/syllaslopos.iso" --fault $$kind \
+			--qemu $(QEMU) $(if $(QEMU_BIOS),-bios "$(QEMU_BIOS)"); \
+	done
+	$(PYTHON) tools/console-check.py --output "$(BUILD)/faults/screen" --iso "$(ISO)" \
+		--resolution 1024x768x32 --fault null --qemu $(QEMU) $(if $(QEMU_BIOS),-bios "$(QEMU_BIOS)")
 
 run: $(ISO)
 	$(QEMU) $(QEMU_FLAGS) -display "$(QEMU_DISPLAY)" -monitor none -serial stdio

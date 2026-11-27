@@ -22,6 +22,12 @@ impl Com1 {
         Self(())
     }
 
+    /// Reuse COM1 from the fatal crash path without reprogramming it.
+    /// The caller must never return to the code that owns the other handle.
+    pub unsafe fn steal() -> Self {
+        Self(())
+    }
+
     pub fn read(&mut self) -> Option<u8> {
         // SAFETY: COM1 is owned by this instance and the kernel runs at CPL0.
         let status = unsafe { inb(LINE_STATUS) };
@@ -41,5 +47,12 @@ impl Com1 {
             }
             unsafe { outb(COM1, byte) };
         }
+    }
+}
+
+impl core::fmt::Write for Com1 {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        self.write(text.as_bytes());
+        Ok(())
     }
 }

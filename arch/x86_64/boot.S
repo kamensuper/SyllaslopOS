@@ -120,6 +120,7 @@ low_pdpt:
     .skip 4096
 high_pdpt:
     .skip 4096
+.global page_directory          # paging.rs splits entry 0 into 4 KiB pages
 page_directory:
     .skip 4096
 mmio_pdpt:

@@ -223,11 +223,45 @@ def recovery(guest):
         guest.wait_for(marker, start)
 
 
+# Serial lines each fatal fault must produce, in order.
+FAULTS = {
+    "null": [b"CPU EXCEPTION #PF page fault (vector 14)", b"null pointer guard"],
+    "ud": [b"CPU EXCEPTION #UD invalid opcode (vector 6)"],
+    "de": [b"CPU EXCEPTION #DE divide error (vector 0)"],
+    "gp": [b"CPU EXCEPTION #GP general protection (vector 13)"],
+    "stack": [b"CPU EXCEPTION #DF double fault (vector 8)", b"kernel stack guard (stack overflow)"],
+}
+CRASH_BACKDROP = bytes((38, 12, 16))
+
+
+def fault(guest, kind, resolution):
+    guest.wait_for(b"SYLLASLOPOS: exceptions armed, ", 0)
+    if resolution:
+        guest.wait_for(b"SLC VIDEO " + resolution.encode(), 0)
+    guest.wait_for(b"SLC READY", 0)
+    start = len(guest.serial_log)
+    send = guest.ps2 if resolution else (lambda text: guest.serial(text.replace("\n", "\r").encode()))
+    send("fault int3\n")
+    guest.wait_for(b"Breakpoint handled; execution resumed.", start)
+    start = len(guest.serial_log)
+    send(f"fault {kind}\n")
+    for marker in FAULTS[kind] + [b"SYLLASLOPOS: halted"]:
+        guest.wait_for(marker, start)
+    # A broken handler would triple fault, which ends QEMU under -no-reboot.
+    time.sleep(0.3)
+    assert guest.process.poll() is None, "QEMU exited: the crash path reset the machine"
+    if resolution:
+        pixels = guest.screen(f"crash-{kind}").split(b"\n", 3)[3]
+        fraction = pixels.count(CRASH_BACKDROP) * 3 / len(pixels)
+        assert fraction > 0.8, f"crash screen background is {fraction:.3%}"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--iso", required=True, type=Path)
     parser.add_argument("--resolution")
+    parser.add_argument("--fault", choices=sorted(FAULTS))
     parser.add_argument("--qemu", nargs=argparse.REMAINDER, required=True)
     options = parser.parse_args()
     folder = options.output.resolve()
@@ -242,11 +276,15 @@ def main():
     try:
         guest.connect()
         guest.wait_for(b"SYLLASLOPOS: x86_64 kernel entry ok", 0)
-        if options.resolution:
+        if options.fault:
+            fault(guest, options.fault, options.resolution)
+            print(f"PASS: fault {options.fault} reported" + (f" on VGA {options.resolution}" if options.resolution else " on COM1"))
+        elif options.resolution:
             graphical(guest, options.resolution)
+            print(f"PASS: PS/2 and VGA {options.resolution}")
         else:
             recovery(guest)
-        print(f"PASS: {'PS/2 and VGA ' + options.resolution if options.resolution else 'COM1 recovery'}")
+            print("PASS: COM1 recovery")
         return 0
     finally:
         guest.close()

@@ -27,6 +27,7 @@ xorriso qemu-system-x86-core qemu-ui-gtk python3` and use the GRUB tool names
 | `make run` | Opens the VGA console and mirrors command results through COM1 |
 | `make run-serial` | Boots headlessly with COM1 on stdio |
 | `make test` | Checks the ELF and original serial boot marker in QEMU |
+| `make test-faults` | Boots once per fatal fault kind and checks the COM1 report and the crash screen |
 | `make test-console` | Runs host tests, drives PS/2 and COM1 in the guest and captures VGA screenshots |
 | `make debug` | Pauses QEMU for GDB on `127.0.0.1:1234` |
 
@@ -42,9 +43,11 @@ and arguments. Right accepts a muted suggestion at the end of an input.
 Press Esc to close a view (Ctrl+] over COM1).
 
 Try `calc (0xff & 15) * 4`, `base 4096`, `memmap`, and `sysinfo`.
+`fault int3` exercises the exception path and returns; `fault null` shows
+the crash report (and halts the machine).
 `keys` lists shortcuts. See [the console guide](docs/CONSOLE.md) for the
 controls and [CLI research](docs/CLI-RESEARCH.md) for the design choices.
 
 The kernel source is MIT-licensed. The ISO incorporates GRUB under its
-upstream licensing. The bundled bitmap masks are derived from DejaVu.
+upstream licensing. The bundled glyph outlines are derived from DejaVu Sans Mono.
 See [references and licenses](docs/REFERENCES.md).

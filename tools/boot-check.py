@@ -9,6 +9,8 @@ import subprocess
 import time
 
 MARKER = b"SYLLASLOPOS: x86_64 kernel entry ok"
+# Printed after the IDT is loaded and the low guard pages are unmapped.
+ARMED = b"SYLLASLOPOS: exceptions armed, "
 TIMEOUT = 20
 RESET_WINDOW = 0.2
 
@@ -23,6 +25,7 @@ def boot(command: list[str], log_path: Path) -> bool:
             events.register(guest.stdout, selectors.EVENT_READ)
             deadline = time.monotonic() + TIMEOUT
             pending = b""
+            seen_entry = False
             while (remaining := deadline - time.monotonic()) > 0:
                 if not events.select(remaining):
                     break
@@ -33,19 +36,21 @@ def boot(command: list[str], log_path: Path) -> bool:
                 log.write(data)
                 log.flush()
                 *lines, pending = (pending + data).split(b"\n")
-                if any(line.rstrip(b"\r") == MARKER for line in lines):
+                seen_entry |= any(line.rstrip(b"\r") == MARKER for line in lines)
+                armed = seen_entry and any(line.startswith(ARMED) for line in lines)
+                if armed:
                     # With -no-reboot, a reset ends QEMU. Catch immediate resets
                     # and shutdowns even if COM1 already sent the marker.
                     try:
                         status = guest.wait(timeout=RESET_WINDOW)
                     except subprocess.TimeoutExpired:
-                        print(f"PASS: {MARKER.decode()} (see {log_path})")
+                        print(f"PASS: {MARKER.decode()}; exceptions armed (see {log_path})")
                         return True
                     print(f"FAIL: QEMU exited after the kernel marker ({status})")
                     return False
-                # No future suffix can make an overlong line equal to the marker.
-                if len(pending) > len(MARKER) + 1:
-                    pending = b"\0" + pending[-len(MARKER) :]
+                # Keep the partial line bounded; both markers are short.
+                if len(pending) > 256:
+                    pending = pending[-256:]
             print(f"FAIL: no kernel marker within {TIMEOUT}s (see {log_path})")
             return False
         finally:

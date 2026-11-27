@@ -1,9 +1,9 @@
-use core::arch::x86_64::__cpuid;
+use core::arch::{asm, x86_64::__cpuid};
 
 use super::state::{Change, Console, Theme, Tone, View};
 use crate::bootinfo::{BootInfo, Memory, Video};
 
-pub const VERSION: &str = "0.2.0";
+pub const VERSION: &str = "0.3.0";
 
 pub struct Cpu {
     vendor: [u8; 12],
@@ -320,6 +320,14 @@ pub static REGISTRY: &[Command] = &[
         uptime,
     ),
     cmd(
+        "fault",
+        "fault <kind>",
+        "Raise a CPU exception: int3 ud de gp null stack",
+        Args::Choices(FAULTS),
+        Need::Base,
+        fault,
+    ),
+    cmd(
         "reboot",
         "reboot confirm",
         "Reset this machine through i8042",
@@ -476,7 +484,7 @@ fn sysinfo(console: &mut Console, services: &Services, _: &str) -> Change {
     }
     console.detail(
         Tone::Muted,
-        format_args!("Execution   bootstrap CPU / interrupts masked"),
+        format_args!("Execution   bootstrap CPU / IRQs masked / exceptions armed"),
     );
     Change::Report
 }
@@ -740,6 +748,70 @@ fn uptime(console: &mut Console, _: &Services, _: &str) -> Change {
     console.log(
         Tone::Muted,
         format_args!("Uptime needs a calibrated monotonic clock."),
+    );
+    Change::Report
+}
+
+const FAULTS: &[&str] = &["int3", "ud", "de", "gp", "null", "stack"];
+
+/// Deliberately raise a CPU exception. `int3` returns; the others end in a
+/// crash report and halt the machine.
+fn fault(console: &mut Console, _: &Services, args: &str) -> Change {
+    match args {
+        "int3" => {
+            // SAFETY: the kernel IDT returns from #BP, a trap, to the next
+            // instruction with every register restored.
+            unsafe { asm!("int3", options(nomem)) };
+            console.log(
+                Tone::Success,
+                format_args!("Breakpoint handled; execution resumed."),
+            );
+            return Change::Report;
+        }
+        // SAFETY (all arms below): each raises a fault that the kernel IDT
+        // reports and never returns from. None of them touches Rust memory.
+        "ud" => unsafe { asm!("ud2", options(noreturn, nomem, nostack)) },
+        "de" => unsafe {
+            asm!(
+                "xor eax, eax",
+                "xor edx, edx",
+                "div ecx",
+                in("ecx") 0u32,
+                out("eax") _,
+                out("edx") _,
+                options(nomem, nostack)
+            )
+        },
+        "gp" => unsafe {
+            // A non-canonical address raises #GP rather than #PF.
+            asm!(
+                "mov {tmp}, [{addr}]",
+                addr = in(reg) 0x0000_8000_0000_0000u64,
+                tmp = lateout(reg) _,
+                options(readonly, nostack)
+            )
+        },
+        "null" => unsafe {
+            asm!(
+                "mov {tmp}, [{addr}]",
+                addr = in(reg) 0u64,
+                tmp = lateout(reg) _,
+                options(readonly, nostack)
+            )
+        },
+        // Pushing forever runs into the unmapped stack guard page.
+        "stack" => unsafe { asm!("55:", "push rax", "jmp 55b", options(noreturn)) },
+        _ => {
+            console.log(
+                Tone::Muted,
+                format_args!("Choices: int3 resumes; ud, de, gp, null and stack halt the machine."),
+            );
+            return Change::Report;
+        }
+    }
+    console.log(
+        Tone::Error,
+        format_args!("The CPU did not raise the expected exception."),
     );
     Change::Report
 }

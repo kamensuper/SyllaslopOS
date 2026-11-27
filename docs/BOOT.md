@@ -24,9 +24,28 @@ panic handler. QEMU TCG and SeaBIOS are the exercised firmware path.
    Missing or malformed optional information leaves COM1 available.
 
 The boot aliases remain writable and executable. The kernel keeps all
-boot tables and loader bytes reserved. Interrupts remain masked. Before
-publishing general RAM, add a kernel IDT, guarded stacks, per-section
-protections, and a record of the live boot mappings and references.
+boot tables and loader bytes reserved. Maskable interrupts remain off.
+
+## Exceptions and guard pages
+
+5. Right after the entry marker, `interrupts.rs` loads a kernel GDT with a
+   64-bit TSS and an IDT for vectors 0-31. Double fault, NMI and machine
+   check use IST stacks of 32 KiB each. `#BP` returns; every other vector
+   ends in `crash.rs`, which writes a register dump to COM1, paints it on
+   the framebuffer when one is attached, and halts.
+6. `paging.rs` then replaces the first 2 MiB leaf, shared by the low and
+   higher-half aliases, with a 4 KiB page table. Physical pages below
+   64 KiB (or below the boot information page, if GRUB put it lower) and
+   the page under the 64 KiB kernel stack (`__stack_guard`) are not
+   present. A null dereference raises `#PF`. A stack overflow raises `#PF`
+   that cannot push its frame, which escalates to `#DF` on IST1. The
+   linker asserts that the kernel ends inside this first 2 MiB.
+7. COM1 then reports `SYLLASLOPOS: exceptions armed, ...`, which
+   `make test` requires after the entry marker.
+
+Still to do before publishing general RAM: per-section protections
+(read-only text and rodata, NX data), dropping the low identity alias,
+and a record of the live boot mappings and references.
 
 ## Framebuffer aperture
 
@@ -36,7 +55,10 @@ padded framebuffer. Early BIOS graphics are scoped to the physical
 `[0xc0000000, 0x100000000)` PCI window and must not overlap non-reserved
 ranges in the firmware map after 2 MiB rounding. At most 64 MiB are mapped
 into the dedicated virtual window at `0xffffff0000000000`. The leaves use
-uncached memory and disable instruction fetch on supporting CPUs. This
+write-combining memory, through PAT entry 7, which the kernel programs to
+WC (no boot mapping selects entry 7). CPUs without PAT fall back to
+uncached memory. The console issues `sfence` after each frame. The leaves also
+disable instruction fetch on supporting CPUs. This
 aperture has no alias in the low RAM window. The kernel draws directly and
 uses the reported pitch. Invalid modes and the `serial` boot argument
 select COM1 recovery.

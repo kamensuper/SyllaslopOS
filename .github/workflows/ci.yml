@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils make grub-common grub-pc-bin xorriso mtools \
+            qemu-system-x86 python3
+
+      - name: Install the pinned Rust toolchain
+        # rust-toolchain.toml selects 1.85.1 and x86_64-unknown-none.
+        run: |
+          rustup toolchain install 1.85.1 --profile minimal --target x86_64-unknown-none
+          rustc --version
+
+      - name: Build kernel and ISO
+        run: make -j"$(nproc)"
+
+      - name: Host unit tests
+        run: make test-host
+
+      - name: QEMU boot check
+        run: make test
+
+      - name: Fault and crash report checks
+        run: make test-faults
+
+      - name: Console checks (PS/2, VGA, COM1)
+        run: make test-console
+
+      - name: Upload images, logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: syllaslopos-${{ github.sha }}
+          if-no-files-found: ignore
+          path: |
+            build/*.iso
+            build/kernel.elf
+            build/*.log
+            build/screens*/
+            build/faults/

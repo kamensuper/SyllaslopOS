@@ -5,6 +5,7 @@ mod console;
 mod graphics;
 mod input;
 mod io;
+mod paging;
 mod serial;
 
 fn halt() -> ! {

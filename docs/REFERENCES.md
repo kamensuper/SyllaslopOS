@@ -61,7 +61,10 @@ patterns. Their code and runtime dependencies were not incorporated.
 | [Syllable](https://syllable.metaproject.frl/), [Haiku Interface Kit](https://www.haiku-os.org/docs/api/group__interface.html) and [Plan 9 rio](https://man.cat-v.org/plan_9/1/rio) | Workstation-style ownership, consistent actions and separation between display and application state. The firmware-backed kernel console is a bring-up stage toward a userspace application. |
 | [Linux framebuffer format guide](https://docs.kernel.org/fb/api.html) and [QEMU QMP](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html) | Respect pitch and channel layout. Validate through guest input, serial output and the emulated VGA scanout. |
 
-The masks come from DejaVu 2.37. Their
+The glyph outlines in `kernel/graphics/assets/mono.outline` are extracted
+from DejaVu Sans Mono 2.37. Their
 [font license](../kernel/graphics/assets/DejaVu-LICENSE.txt) travels with
-the assets. `python3 tools/bake-fonts.py` regenerates them with Pillow
-and FreeType. Normal kernel builds use the committed masks and need neither.
+the asset. `python3 tools/bake-outlines.py [DejaVuSansMono.ttf]` regenerates
+it with only the Python standard library. The asset is not a font file and
+does not use the Bitstream or DejaVu names. Normal kernel builds use the
+committed asset.

@@ -23,6 +23,7 @@ pub fn run(
     let mut console = Console::new();
     let mut screen = framebuffer.as_mut().map(|frame| {
         let screen = Screen::new(frame, &console);
+        frame.flush();
         services.initial_bytes = frame.bytes_written();
         services.frame_bytes = services.initial_bytes;
         services.last_draw_bytes = services.initial_bytes;
@@ -65,6 +66,7 @@ pub fn run(
             if let (Some(frame), Some(screen)) = (framebuffer.as_mut(), screen.as_mut()) {
                 let before = frame.bytes_written();
                 screen.change(frame, &console, change);
+                frame.flush();
                 services.frame_bytes = frame.bytes_written();
                 services.last_draw_bytes = services.frame_bytes - before;
             }
@@ -104,6 +106,7 @@ pub fn run(
                     report(&mut serial, &console);
                     if let (Some(frame), Some(screen)) = (framebuffer.as_mut(), screen.as_mut()) {
                         screen.change(frame, &console, Change::Report);
+                        frame.flush();
                         services.frame_bytes = frame.bytes_written();
                     }
                 }

@@ -13,12 +13,13 @@ The first guest milestone is a serial line from 64-bit Rust after the
 Multiboot2 argument and kernel stack checks. See [the boot contract](docs/BOOT.md)
 for ownership and the mapping scope.
 
-## Next milestone · exceptions and memory
+## Next milestone · memory ownership
 
-Install a kernel IDT with a controlled fault test, then validate the
-Multiboot2 info structure in an explicitly mapped range before parsing its
-memory information. Establish the new page protections and track live boot
-state before handing any eligible frames to an allocator.
+The IDT, fault tests and guard pages are in place (see SLC 0.3 below).
+Next: validate the Multiboot2 info structure in an explicitly mapped range
+before parsing its memory information, apply per-section page protections,
+drop the low identity alias, and track live boot state before handing any
+eligible frames to an allocator. Then PIC/APIC setup and input IRQs.
 
 ## Verification record · 2026-11-21
 
@@ -178,3 +179,26 @@ and passed the same serial recovery checks.
 | --- | ---: | --- |
 | `build/kernel.elf` | 151,704 | `fc7367cc007514af793aa7257cac980536098a926689414c11ec600adfc0fd0d` |
 | `build/syllaslopos.iso` | 2,863,104 | `7e29d75ac3bf67ce4845f0f583867abb54b84a465251fc5199bc720dfea48597` |
+
+## SLC 0.3 · exceptions, guard pages, vector text, CI
+
+**Status: written, not yet built or booted.** This change was prepared
+without a Rust toolchain or QEMU. Run `make -j4 test-host test
+test-faults test-console` (or let CI do it) and record the results and
+artifact hashes here before treating it as verified.
+
+| Area | Change |
+| --- | --- |
+| Exceptions | Kernel GDT and TSS, IDT for vectors 0-31, IST stacks for #DF, NMI and #MC. `#BP` returns; other vectors print a register dump to COM1 and on a red crash screen, then halt. |
+| Panics | The panic handler reports file, line, column and message through the same crash path. |
+| Guard pages | The first 2 MiB leaf is split into 4 KiB pages. Low memory up to 64 KiB and the page under the kernel stack are unmapped. |
+| Fault test | `fault int3` resumes. `fault ud`, `de`, `gp`, `null` and `stack` must produce the matching report. `make test-faults` boots once per kind. |
+| Framebuffer | PAT entry 7 is programmed to write-combining for the aperture, with `sfence` after each frame. UC fallback without PAT. |
+| Text | Bitmap masks replaced with DejaVu Sans Mono outlines rasterized at each scale (16 vertical samples, exact horizontal coverage, cached per glyph). Zoom 2 is no longer pixel-doubled. |
+| Boot check | `make test` also requires `SYLLASLOPOS: exceptions armed, ...` after the entry marker. |
+| CI | `.github/workflows/ci.yml` builds and runs host tests, the boot check, fault checks and console checks on Ubuntu 24.04, and uploads images, logs and screenshots. |
+
+Expected changes to recorded numbers: kernel size and `.bss` grow (glyph
+cache of about 135 KiB, three 32 KiB IST stacks, a 4 KiB guard and page
+table). Framebuffer write counts in `metrics` change because glyph
+coverage differs from the old masks.
