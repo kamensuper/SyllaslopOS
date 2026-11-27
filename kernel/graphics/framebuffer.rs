@@ -76,7 +76,11 @@ impl Framebuffer {
         }
     }
 
+    /// A zero scale draws nothing.
     pub fn text(&mut self, rect: Rect, text: &[u8], font: &Font, scale: u32, ink: Ink) {
+        if scale == 0 {
+            return;
+        }
         let step = font.w * scale;
         let area = (font.w * font.h) as usize;
         for (index, &byte) in text.iter().take((rect.w / step) as usize).enumerate() {
@@ -109,6 +113,9 @@ impl Framebuffer {
         ink: Ink,
         clip: Rect,
     ) {
+        if scale == 0 {
+            return;
+        }
         let rect = Rect::new(at.0, at.1, size.0 * scale, size.1 * scale)
             .intersect(clip)
             .intersect(self.bounds());
@@ -259,5 +266,28 @@ mod tests {
             ]
         );
         assert_eq!(fb.bytes_written(), 8);
+    }
+
+    #[test]
+    fn zero_scale_draws_nothing() {
+        let mut storage = [0x5a5a_5a5au32; 8];
+        let mut fb = Framebuffer {
+            base: storage.as_mut_ptr().cast(),
+            video: Video {
+                width: 4,
+                height: 2,
+                pitch: 16,
+                ..video()
+            },
+            writes: 0,
+        };
+        let ink = Ink {
+            fore: Color(1, 2, 3),
+            back: Color(4, 5, 6),
+        };
+        fb.text(fb.bounds(), b"A", &crate::graphics::SMALL, 0, ink);
+        fb.mask((0, 0), (2, 2), &[255; 4], 0, ink, fb.bounds());
+        assert_eq!(storage, [0x5a5a_5a5a; 8]);
+        assert_eq!(fb.bytes_written(), 0);
     }
 }
